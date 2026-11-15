@@ -1,16 +1,12 @@
 ---
-description: "Change the blueprint deliberately (A-nn amendment) and recompile the affected epics"
+description: "Change a blueprint deliberately (an amendment) and recompile the epics it affects: new or changed behaviour, an AC, copy, data or a decision. Usually started by speckit-blueprint-flow."
 ---
 
 # Amend the blueprint
 
 The blueprint is the source of truth. When reality or the user disagrees with it, the blueprint changes
-first, explicitly, and the compiled specs follow. This is the only way spec files change.
-
-`docs/DECISIONS.md` and `docs/REVIEW-CHECKLIST.md` below are the default paths; a project can move them,
-and a project with several blueprints (`blueprints:` in the config) has one of each per blueprint.
-`blueprint.py status --json` reports the ones in use as `decisions` and `review_checklist`, for the
-active feature's blueprint (or the one named with `--blueprint <id>`).
+first, explicitly, and the compiled specs follow. This is the only way spec files change. Follow
+`.specify/extensions/blueprint/references/conventions.md`.
 
 ## User Input
 
@@ -18,52 +14,36 @@ active feature's blueprint (or the one named with `--blueprint <id>`).
 $ARGUMENTS
 ```
 
-## Steps
+Scope additions (a new capability, more than a story or two) are not amendments: use
+`/speckit-blueprint-discover` in incremental mode. A change that spans two products is two amendments,
+one per blueprint.
 
-1. **Understand the change.** Restate it in one or two lines: what changes, for which epic(s), and why.
-   Scope additions (a new capability) are not amendments: they become new stories in a later epic — use
-   `/speckit-blueprint-discover` in incremental mode for anything bigger than a story or two.
+## Rounds
 
-2. **Find what it touches without reading the whole blueprint.** Use IDs and section numbers:
+An amendment re-decides part of the product, so its thinking runs at `effort.amend` (default `max`) in a
+subagent (conventions §3); if `amend` is not listed under `effort`, do the same here. Give the subagent the
+user's words verbatim, the blueprint id and path, the active feature and its branch (from
+`status --json`) and this file's path.
 
-   ```bash
-   python3 .specify/extensions/blueprint/scripts/blueprint.py find E03-S02 SCR-04 ENT-Order
-   python3 .specify/extensions/blueprint/scripts/blueprint.py section 12.4
-   grep -n "CP-SCR04-" <blueprint>
-   ```
-
-   `<blueprint>` is the path `status --json` reports as `blueprint`. With several blueprints, amend the
-   one the change belongs to: pass `--blueprint <id>` to every command here (or qualify IDs, `desk:SCR-04`),
-   and record the amendment in that blueprint's own log. A change that spans two products is two
-   amendments, one per blueprint.
-
-3. **Ask first** when the change alters user-visible behaviour, money, data retention or security, unless
-   the user's message already decided it. Smaller technical amendments can go ahead and be reported.
-
-4. **Edit the blueprint in place.** Change the affected AC, copy row, entity, endpoint or decision where it
-   lives, and mark it `(amended A-nn)`. Never append a "version 2" section. Add a row to the Amendments log
-   in the Session Protocol section: `A-nn | date | epic/story | what changed | why | approved by`.
-   If a decision changed, mark the old DR superseded and add the new one. Keep the evidence rules: new
-   external facts carry `[VERIFIED — S-nn, date]` or `[ASSUMED — why]`.
-
-5. **Lint**: `python3 .specify/extensions/blueprint/scripts/blueprint.py lint [--blueprint <id>]` until it exits 0
-   (see `/speckit-blueprint-lint` for how to fix findings).
-
-6. **Propagate.** Run:
-
-   ```bash
-   python3 .specify/extensions/blueprint/scripts/blueprint.py stale [--blueprint <id>]
-   ```
-
-   For each listed epic:
-   - no tasks done (`tasks_done` = 0): recompile with `compile <Enn>`; if it had a tasks.md, regenerate it
-     with `/speckit-tasks` (the old one no longer matches).
-   - partly or fully built: do not recompile over finished work silently. Tell the user what changed under
-     built code and propose either recompiling with `--force` and regenerating tasks (the implement step
-     then reworks only what changed), or a follow-up story in a later epic. The user decides. If they keep
-     the built epic as it is (the change is covered elsewhere, or does not affect the built code), record it
-     so status stops reporting the change:
-     `python3 .specify/extensions/blueprint/scripts/blueprint.py accept <Enn> --note "<why, e.g. covered by E04 (A-03)>"`.
-   - If constitution sections changed, also run `/speckit-blueprint-bootstrap` for that blueprint.
-
-7. Report: the amendment ID, files and epics affected, what was recompiled, and what waits on the user.
+1. **Analyse and draft (subagent).** It restates the change in one or two lines; finds what it touches
+   with `blueprint.py find <ID>` / `section <n>` (never the whole file); decides whether it changes
+   user-visible behaviour, money, data retention or security; and drafts every edit exactly (location, old
+   text, new text), the amendment ID (`A-E03-1` when the change is made on an epic's branch, `A-nn` on the
+   integration branch; conventions §2) and the decision records it supersedes or adds. It returns the
+   draft without editing anything.
+   **You:** if the change alters behaviour, money, data retention or security and the user's message did
+   not already decide it, show the draft and ask; send the reply verbatim. Technical amendments go ahead.
+2. **Apply and lint (same subagent).** It edits the blueprint in place, marks each change
+   `(amended A-…)` (never a "version 2" section), adds the Amendments log row
+   (`| A-… | date | epic/story | what changed | why | approved by |`), marks a superseded DR and adds the
+   new one, keeps the evidence tags (`[VERIFIED — S-nn, date]` / `[ASSUMED — why]`), runs
+   `blueprint.py lint --blueprint <id>` until it exits 0, then `blueprint.py stale --blueprint <id>`, and
+   returns that list.
+3. **Propagate (you).** For each epic `stale` lists:
+   - no tasks done: `/speckit-blueprint-compile <epic>`, and `/speckit-tasks` again if it had a tasks.md;
+   - partly or fully built: never recompile over finished work silently. Tell the user what changed under
+     built code and offer: recompile with `--force` and regenerate tasks (implement then reworks only what
+     changed), a follow-up story in a later epic, or keeping the epic as built
+     (`blueprint.py accept <epic> --note "<why>"`). The user decides.
+   - If status now reports the constitution `outdated`, run `blueprint.py bootstrap --blueprint <id>`.
+4. Report the amendment ID, what changed, which epics were recompiled, and what waits on the user.

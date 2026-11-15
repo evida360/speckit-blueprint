@@ -37,12 +37,28 @@ Consequences for writing:
 Compile relies on the template's conventions exactly:
 
 - `## Epic 03 — <Title>`; header fields (Goal, Personas served, Depends on, Preconditions for the session,
-  Scope, Flows and screens implemented, Data and API touched, Risks) before the first story. Two optional
-  fields for projects that span repositories: `**Target repositories**` (table: repository, role) becomes
-  spec.md's "Target Repositories" section, and `**Repositories**` (order; per repository the base branch,
-  working branch and contracts) becomes plan.md's "Repositories" section.
-- `### E03-S02 — <Title>`; inside, the bold labels in order: Story, Context, Scope, Acceptance Criteria,
-  Edge cases, Tests, Tasks, Story DoD.
+  Scope, Flows and screens implemented, Data and API touched, Risks) before the first story.
+- `**Depends on**` lists epic IDs (`E00, E02`; `one:E18` for another blueprint's epic), then any prose.
+  Each comma-separated part that starts with an epic ID is a dependency; status runs an epic only when
+  they are done. `—` means none.
+- In a project whose config lists `repositories:`, every epic has a `**Repositories**` table, one row per
+  repository it changes:
+
+  ```
+  **Repositories**
+
+  | Repository | Order | Role | Base | Branch | Contracts |
+  |---|---|---|---|---|---|
+  | `evida-id` | 1 | Provides the session API | main | | provides API-21 |
+  | `evida-desk` | 2 | Consumes it | | | consumes API-21 |
+  ```
+
+  Providers come before consumers. Base and Branch are optional (defaults: the repository's `base` and
+  `<branch_prefix><feature folder>`). Prose under the table is kept as notes in plan.md. Compile turns the
+  table into spec.md's "Target Repositories" and plan.md's "Repositories" sections, and every task seed
+  starts with its repository in brackets (`[evida-desk] E03-S01-T2 …`).
+- `### E03-S02 — <Title>`; inside, the bold labels in order: Story, Context, Scope, Acceptance Criteria
+  (`- AC-1 …` lines: status and the review check evidence per AC), Edge cases, Tests, Tasks, Story DoD.
 - After the last story: `**Epic-level tests**`, `**Definition of Done**`, `**Session handoff checklist**`.
 
 How they map: each story becomes a spec-kit user story (priority = blueprint order); its Tasks become the
@@ -63,12 +79,16 @@ instead of the per-session runbook:
 - **State lives in files:** `tasks.md` checkboxes (progress), `review.md` (evidence and handoff),
   the blueprint's decisions log (`docs/DECISIONS.md` by default; with an index), its Amendments log (changes to the plan).
   There is no PROGRESS.md; `blueprint.py status` derives progress from the feature folders.
+- **Parallel epics:** one worktree per epic (`blueprint.py workspace Enn --create`); an epic starts when the
+  epics it depends on are done and merged.
 - **Gates** (an epic is done only when all are true): every AC has evidence, `check` and CI green, epic-level and regression tests green, review checklist
   applied with results, no gate weakened without a DR, no unexplained TODO or skipped test, no new flaky
   test, decisions and amendments recorded.
 - **Amendments log** (keep it here; the linter looks for it):
   `| A-nn | Date | Epic/story | What changed | Why | Approved by |`. Changes go through
-  `/speckit-blueprint-amend`: edit in place, mark `(amended A-nn)`, recompile affected epics.
+  `/speckit-blueprint-amend`: edit in place, mark `(amended A-nn)`, recompile affected epics. Amendments
+  made while building an epic, on its branch, are numbered within it (`A-E03-1`) so parallel epics never
+  collide; decisions taken while building are `DR-E03-1` in the decisions log.
 - **`[VERIFY-AT-BUILD]` re-check list**: every such item with the epic that first depends on it.
 
 ## 4. Appendices

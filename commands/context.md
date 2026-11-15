@@ -1,17 +1,12 @@
 ---
-description: "Load the active feature's spec and build rules before implementation (hook)"
+description: "Before /speckit-implement on a blueprint feature (hook): load its spec and rules and check its preconditions. Does nothing for other features."
 ---
 
 # Load build context (before_implement hook)
 
-`/speckit-implement` reads tasks.md, plan.md and the optional design files, but not spec.md. In a
-blueprint project spec.md holds the acceptance criteria, edge cases and exact copy that decide whether the
-work is right, so this hook puts it in front of the implementation.
-
-`docs/DECISIONS.md` and `docs/REVIEW-CHECKLIST.md` below are the default paths; a project can move them,
-and a project with several blueprints (`blueprints:` in the config) has one of each per blueprint.
-`blueprint.py status --json` reports the ones in use as `decisions` and `review_checklist`, for the
-active feature's blueprint (or the one named with `--blueprint <id>`).
+`/speckit-implement` reads tasks.md, plan.md and the design files, but not spec.md, which holds the
+acceptance criteria, edge cases and exact copy that decide whether the work is right. This hook puts it
+in front of the implementation. Follow `.specify/extensions/blueprint/references/conventions.md`.
 
 ## User Input
 
@@ -21,56 +16,29 @@ $ARGUMENTS
 
 ## Steps
 
-`check` below is the project's own gate command, the one plan.md's Technical Context gives from blueprint
-§13.4 (for example `npm run check` or `python3 scripts/check.py`). It is not a `blueprint.py` subcommand.
-
-0. **Scope.** Read the active feature from `.specify/feature.json` (`feature_directory`). If that folder
-   has no `.blueprint.json`, the feature was not compiled from the blueprint: this hook does not apply.
-   Say nothing, change nothing, and return to `/speckit-implement`. Everything below is for blueprint
-   features only.
-1. Find the active feature:
-
-   ```bash
-   python3 -c "import json;print(json.load(open('.specify/feature.json'))['feature_directory'])"
-   ```
-
-   Its blueprint is `blueprint_id` in `<feature>/.blueprint.json`. Print the rules that govern it:
-
-   ```bash
-   python3 .specify/extensions/blueprint/scripts/blueprint.py rules
-   ```
-
-   In a project with several blueprints the constitution holds one Blueprint Rules block per blueprint;
-   only this one applies to this feature. Ignore the other blueprints' blocks (they say so themselves),
-   but keep the project's own principles outside the blocks.
-2. Read `<feature>/spec.md` in full, once. It is compiled to contain only this epic, so it is the one large
-   file worth reading whole.
-3. Read `<feature>/plan.md` section "Preconditions and VERIFY-AT-BUILD". Check every precondition (previous
-   epics done per `blueprint.py status`, `check` green on a clean tree, required env vars present). Re-check
-   each `[VERIFY-AT-BUILD]` item this epic depends on (a search or a sandbox request) and record `✔ date` or
-   `✘ date + what changed` at the top of `<feature>/review.md` under a `## VERIFY-AT-BUILD` heading
-   (create the file with `Status: IN PROGRESS` as its first line if it does not exist).
-   If a precondition fails or an item is `✘`, stop and report; the user decides.
-4. Hold these rules for the whole implementation:
-   - Tests for a story come from its ACs and **Tests** block and fail before the code exists.
-   - Run `check` after each task; keep it green; never weaken the gate.
-   - Mark each task `[X]` in `tasks.md` as soon as it is done and green, one task at a time, before
-     starting the next. Never tick tasks in bulk at the end: the ticks are the resume point if the
-     session stops, and `blueprint.py status` reads progress from them.
-   - User-facing text only from `CP-` IDs in spec.md; no improvised strings.
-   - A decision the spec does not cover → `DR-nn` in this blueprint's decisions log (`decisions` in
-     `status --json`, `docs/DECISIONS.md` by default; with its index row) in the same
-     commit. An AC that is wrong or impossible → stop and use `/speckit-blueprint-amend`; never implement
-     something different silently.
-   - Read source files over 200 lines by range (`grep -n` first). Do not re-read files you have not changed.
-     For anything outside the feature folder use `blueprint.py section <n>` or `blueprint.py find <ID>`,
-     not the whole blueprint (they read the active feature's blueprint). Where several blueprints share a
-     file (tasks, commits, the constitution), write this blueprint's IDs with its prefix (`DESK:DR-03`).
-   - The project's own rules still hold: where the constitution's own principles or the project's agent
-     instructions (`CLAUDE.md` and whatever it imports, `AGENTS.md`, where present) are stricter (task format, which repository a task runs in, approvals), follow them.
-   - Blueprint lines that mention `PROGRESS.md` map to this flow: story and AC evidence go to the ticked
-     tasks in `tasks.md` and to `review.md`.
-5. If the session is already long (another epic was built in it, or you are past a few hundred thousand
-   tokens of context), say so and recommend finishing the current story, then continuing in a fresh session
-   with "continue"; `/speckit-implement` resumes from the first unchecked task.
-6. Return to `/speckit-implement`.
+1. Run `blueprint.py context`. If `applies` is false, say nothing, change nothing and return to
+   `/speckit-implement`.
+2. Run its `rules_command`: the rules that govern this feature (other blueprints' blocks do not apply).
+3. Read the file at `spec` in full, once.
+4. If `problems` is not empty (dependencies not done here, the blueprint changed since compile, a
+   repository missing or on the wrong branch), stop and report them; the user decides.
+5. Re-check every `[VERIFY-AT-BUILD]` item in `preconditions_and_verify_at_build` that this epic depends
+   on (a search or a sandbox request), and record `✔ date` or `✘ date + what changed` under a
+   `## VERIFY-AT-BUILD` heading at the top of the feature's `review.md` (create it with
+   `Status: IN PROGRESS` as its first line). A `✘`: stop and report.
+6. Hold these rules for the whole implementation (the constitution has the rest):
+   - Tick each task `[X]` in tasks.md as soon as it is done and its gate is green, one at a time. The ticks
+     are the resume point, and the progress and story timings in status, metrics and the dashboard.
+   - Each task works in its repository (`repositories[].path` in the context facts) and gives paths
+     relative to it. After a task, run that repository's gate (`blueprint.py gate <epic> --repo <name>`
+     when the config has one); keep it green and never weaken it.
+   - A decision the spec does not cover: the next ID is `next_decision_id`; add its record and index row
+     to `decisions_log` in the same commit. An AC that is wrong or impossible: stop and use
+     `/speckit-blueprint-amend`.
+   - Read source files over 200 lines by range (`grep -n` first); do not re-read unchanged files. Anything
+     outside the feature folder: `blueprint.py section` / `find`, not the blueprint.
+   - Lines that mention `PROGRESS.md` map to ticked tasks and `review.md`.
+7. If the session is already long (another epic was built in it, or a few hundred thousand tokens of
+   context), say so and suggest finishing the current story, then continuing in a fresh session with
+   "continue"; `/speckit-implement` resumes from the first unchecked task.
+8. Return to `/speckit-implement`.

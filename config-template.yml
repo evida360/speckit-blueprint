@@ -1,4 +1,5 @@
 # speckit-blueprint configuration. Every key is optional; defaults are shown.
+schema: 2
 
 # Where the blueprint lives (a project with one blueprint; for several, see `blueprints:` at the end).
 blueprint_path: docs/BLUEPRINT.md
@@ -50,15 +51,57 @@ second_level_types:
   - EC
 
 # Block Edit/Write on compiled files (spec.md, plan.md, research.md, data-model.md,
-# quickstart.md, contracts/, constitution) in Claude Code.
+# quickstart.md, contracts/, the managed constitution rules) in Claude Code.
 guard: true
+
+# Steps that must run at a guaranteed reasoning level (low | medium | high | xhigh | max). They run their
+# reasoning in a subagent started at that level, whatever the session's level; a hook checks the real
+# level. Every other step (compile, tasks, implement, …) runs at the session's level. `session` takes a
+# step off the list.
+effort:
+  discover: max
+  amend: max
+  review: max
+
+# Model for those subagents: inherit (the session's), or an alias such as opus or sonnet.
+effort_model: inherit
+
+# Metrics from Claude Code transcripts (time, tokens, cost, model, effort per epic and story):
+# local: kept in the hub's .git, never committed; commit: also a summary per finished epic in its feature
+# folder; off: none.
+metrics: local
+
+# Repositories the epics change, when the code lives outside this repository (the hub). Paths are
+# relative to this repository. Each epic's **Repositories** table names the ones it changes. Without this
+# map the hub is the only repository.
+#
+# repositories:
+#   wiki:                        # the hub itself, when its tasks change it too
+#     path: .
+#     branch_prefix: docs/
+#   desk:
+#     path: ../desk
+#     gate: make check           # what `blueprint.py gate` runs there
+#     base: main                 # default base branch of epic branches
+#     branch_prefix: feat/       # epic branches: <prefix><feature folder>
+#     remote: git@github.com:org/desk.git   # where `blueprint.py workspace setup` clones it from
+#   id: {path: ../id, gate: make lint test, remote: ../id.git}   # relative to the hub's own URL
+#
+# path defaults to ../<name>. A relative remote resolves against the hub's `origin`, as git's relative
+# submodule URLs do, so one config serves SSH and HTTPS clones. In blueprint-config.local.yml a
+# repository's settings override these one by one.
+
+# Epic branch names are <prefix><feature folder> (Spec Kit's convention). Unset: the prefix from Spec
+# Kit's git extension config, else none. A repository's own branch_prefix wins.
+# branch_prefix: ""
+
+# Epic worktrees (`blueprint.py workspace <epic> --create`) go to <repository parent>/<worktrees_dir>/.
+worktrees_dir: .worktrees
 
 # Several blueprints in one project (one per product), instead of blueprint_path, decisions_path and
 # review_checklist_path above. Each id gets its own decisions log, review checklist, constitution block
 # and CLAUDE.md block; feature folders are named NNN-<id>-eNN-<slug> and their .blueprint.json records
 # the id. Commands take `--blueprint <id>` (or `<id>:E01`) and default to the active feature's blueprint.
-# Folders compiled before ids existed, and unmarked managed blocks, belong to the default blueprint
-# (default_blueprint, else the first listed).
 #
 # default_blueprint: one
 # blueprints:
@@ -72,8 +115,6 @@ guard: true
 #                               # capitals when there are several blueprints, "" to switch off
 #     number_base: 500          # its feature folders are numbered from 501, so parallel branches of
 #                               # different blueprints never take the same number
-#     sources:                  # where the existing product lives, for brownfield discover
-#       - ../evida-desk
-#       - ../desk-prototype
+#     sources: [desk, desk-prototype]   # repositories (or paths) brownfield discover reads
 #     constitution_sections: ["13.2", "13.5", "14.2"]   # optional: overrides the lists above for this id
 #     plan_sections: ["12.2", "13.4"]
