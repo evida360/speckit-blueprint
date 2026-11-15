@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-11-16
 
 One model for one to many repositories, epics built in parallel, guaranteed reasoning effort where it
 pays, metrics and estimates from Claude Code's own transcripts, and a live dashboard. Breaking: run
