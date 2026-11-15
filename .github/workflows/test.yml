@@ -6,10 +6,14 @@ on:
 
 jobs:
   unittest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python: ["3.9", "3.13"]
+        include:
+          # 3.9 is the oldest Python the hooks may run under (macOS's /usr/bin/python3). ubuntu-latest
+          # (26.04) has no 3.9 build in actions/python-versions, so that job stays on 24.04.
+          - {python: "3.9", os: ubuntu-24.04}
+          - {python: "3.13", os: ubuntu-latest}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
