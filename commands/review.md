@@ -1,17 +1,12 @@
 ---
-description: "Self-review an implemented epic against its ACs and the review checklist, then write the handoff"
+description: "After /speckit-implement on a blueprint feature (hook), or when the flow says so: an independent review of the epic at a guaranteed effort, against its ACs and the review checklist, then the handoff in review.md. Does nothing for other features."
 ---
 
 # Review and hand off (after_implement hook)
 
 The human reviewer sees a large diff produced quickly; their attention is the scarcest resource in the
-process. Everything you can catch here is worth far more than it costs. Review the diff as if someone else
-wrote it.
-
-`docs/DECISIONS.md` and `docs/REVIEW-CHECKLIST.md` below are the default paths; a project can move them,
-and a project with several blueprints (`blueprints:` in the config) has one of each per blueprint.
-`blueprint.py status --json` reports the ones in use as `decisions` and `review_checklist`, for the
-active feature's blueprint (or the one named with `--blueprint <id>`).
+process. A reviewer that did not write the code and is not swayed by the reasoning that produced it
+catches what the implementation missed. Follow `.specify/extensions/blueprint/references/conventions.md`.
 
 ## User Input
 
@@ -19,63 +14,58 @@ active feature's blueprint (or the one named with `--blueprint <id>`).
 $ARGUMENTS
 ```
 
-## Steps
+## You (the session that ran /speckit-implement)
 
-`check` below is the project's own gate command, the one plan.md's Technical Context gives from blueprint
-§13.4 (for example `npm run check` or `python3 scripts/check.py`). It is not a `blueprint.py` subcommand.
+1. Run `blueprint.py review-facts`. If `applies` is false, say nothing, change nothing and return.
+2. If `effort` is set (default `max`), start the review in a fresh subagent at that level (conventions
+   §3). Its prompt: the facts JSON, this file's path, and "do the reviewer's steps below and return the
+   review status and the manual checks for the user". If `effort` is not set, do the steps yourself.
+3. Tell the user, in their language: the status, what they must check by hand, and that the next epic
+   starts in a fresh session with "continue". Do not commit or push unless they ask. With several
+   repositories, merge in the table's order and the hub's branch last.
 
-0. **Scope.** Read the active feature from `.specify/feature.json` (`feature_directory`). If that folder
-   has no `.blueprint.json`, the feature was not compiled from the blueprint: this hook does not apply.
-   Say nothing, change nothing, and return to the caller. Everything below is for blueprint
-   features only.
-1. Active feature: `feature_directory` in `.specify/feature.json`. Epic ID: `epic` in
-   `<feature>/.blueprint.json`, and its blueprint `blueprint_id`; `blueprint.py status --json` then gives
-   that blueprint's `decisions` and `review_checklist`. Base of the epic's diff: the commit before its first task (ask git:
-   `git log --oneline -- <feature>/tasks.md` and the epic branch, if one exists).
+## The reviewer
 
-2. **Gate.** Run the full `check` and the epic-level tests from `<feature>/quickstart.md`. Run the whole
-   regression suite. If the project spans several repositories, run the gate of every repository the
-   epic's tasks touched, as the project's rules define it. Red → fix, do not continue with red.
+Review the epic as if someone else wrote it; the facts JSON lists the ACs, repositories, diffs, gates and
+decisions.
 
-3. **Coverage of the spec.** For every story in `<feature>/spec.md`, for every `AC-n`: name the passing
-   test that proves it, or the manual check (with date and observation). An AC with neither is not done.
-   Check the story's **Edge cases** the same way.
-
-4. **Checklist.** Walk this blueprint's review checklist (`review_checklist`; the project's own, if it has one) over the diff, story by story, and answer every item.
-   Fix what fails instead of noting it. Pay particular attention to the agent-code failure profile:
-   invented APIs (every external symbol must trace to a pinned dependency), duplicated helpers the codebase
-   already had, authorization and input-handling defects behind clean code, and tests that assert too
-   little.
-
-5. **Diff size.** If any story's diff exceeds the limit the checklist sets, say so: the story was
-   mis-sized, and that is worth an amendment for later epics.
-
-6. **Definition of Done.** Walk the epic's Definition of Done in spec.md ("Success Criteria") line by line;
-   each line gets ✔ with evidence or the epic stays IN PROGRESS. Lines that mention `PROGRESS.md` are
-   satisfied by `tasks.md` plus this review file.
-
-7. **Decisions and amendments.** Every decision taken that the spec did not cover has a `DR-nn` in
-   this blueprint's decisions log with its index row. Every AC that changed went through `/speckit-blueprint-amend`.
-
-8. **Write `<feature>/review.md`** (keep a `## VERIFY-AT-BUILD` section if the context hook created one):
+1. **Gate.** Run `blueprint.py gate <epic>` (every repository with a configured gate; the plan's `check`
+   for the rest), the epic-level tests in `quickstart.md` and the whole regression suite. Red → fix, never
+   continue with red.
+2. **Coverage.** For every AC in `acs_needing_evidence`: the passing test that proves it, or the manual
+   check with date and observation. An AC with neither is not done. Check each story's edge cases the same
+   way.
+3. **Checklist.** Walk the review checklist (`review_checklist`) over the diff of every repository,
+   story by story, and answer every item; fix what fails instead of noting it. Watch the agent-code failure
+   profile: invented APIs (every external symbol traces to a pinned dependency), duplicated helpers,
+   authorization and input-handling defects behind clean code, tests that assert too little.
+4. **Diff size.** A story over the checklist's limit was mis-sized; say so (worth an amendment for later
+   epics).
+5. **Definition of Done.** Every line of the epic's Definition of Done (spec.md "Success Criteria") gets ✔
+   with evidence, or the epic stays IN PROGRESS. Lines that mention `PROGRESS.md` are met by tasks.md and
+   this review.
+6. **Decisions and amendments.** Every decision the spec did not cover has its record (`DR-E03-n`) and
+   index row; every changed AC went through `/speckit-blueprint-amend`.
+7. **Write `review.md`** (keep its `## VERIFY-AT-BUILD` section). `Status: DONE` only when 1–6 all pass;
+   status counts it only if every AC of every story has an evidence entry on the story's line(s):
 
    ```
    Status: DONE | IN PROGRESS
    # Handoff — E03 <Title> — <date>
    Stories: E03-S01 DONE · E03-S02 DONE · …
-   check: green (commit abc123) · CI: green|not run · staging: deployed|n/a, smoke n/n
-   AC evidence: E03-S01 AC-1 test/…::name · AC-2 … (one line per story)
+   AC evidence:
+   E03-S01 AC-1 test/…::name · AC-2 manual 2026-11-16, observed … (one line per story, every AC)
+   E03-S02 AC-1 …
+   Repositories: evida-id `feat/…` gate green (abc123) · evida-desk `feat/…` gate green (def456)
+   CI: green | not run · staging: deployed | n/a, smoke n/n
    Self-review: <n> items failed and fixed (list), <n> accepted with reason (list)
    Diff size: within limit | E03-S02 620 lines, over the 400 limit
-   Deviations / amendments: none | A-nn, DR-nn
+   Deviations / amendments: none | A-E03-1, DR-E03-2
    Accepted risks: none | …
-   Decisions added: DR-nn …
    Next epic preconditions: …
    Manual checks for you: …
    ```
 
-   `Status: DONE` only when steps 2–7 all pass. Otherwise `IN PROGRESS` with the exact remaining items.
-
-9. Tell the user, in their language: the status, what they must check by hand, and that the next epic
-   starts in a fresh session with "continue". Do not commit or push unless the user asks; follow their git
-   rules.
+8. With metrics on, add `Estimate vs actual:` and the line `blueprint.py metrics <epic> --brief` prints;
+   with `metrics: commit`, also run `blueprint.py metrics <epic> --write`.
+9. Return the status and the manual checks.

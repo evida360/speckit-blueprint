@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.5.0 — unreleased
+
+One model for one to many repositories, epics built in parallel, guaranteed reasoning effort where it
+pays, metrics and estimates from Claude Code's own transcripts, and a live dashboard. Breaking: run
+`blueprint.py migrate` once in a project made with 0.4 (see "Upgrading from 0.4" in the README).
+
+**Commands: ten → seven.** `flow`, `discover`, `amend`, `compile`, `context` and `review`, plus the
+internal `hook`. `lint`, `bootstrap` and `status` are script subcommands that the commands run;
+`guard` and the session-start status merged into `hook`, which dispatches on the event. The optional
+`before_specify` hook is gone. What the commands repeated (paths, several blueprints, `check`, IDs) lives
+once in `references/conventions.md`; only `flow` carries natural-language triggers.
+
+**Repositories.** `repositories:` in the config (name → path, gate, base, branch_prefix, remote); each
+epic's `**Repositories**` table (Repository, Order, Role, Base, Branch, Contracts) replaces the prose
+`**Target repositories**` / `**Repositories**` fields. Compile validates the names, computes each
+repository's base and branch (`<branch_prefix><feature folder>`, Spec Kit's convention; a Branch cell
+wins) and writes spec.md "Target Repositories" and plan.md "Repositories". New: `blueprint.py repos`
+(each repository's branch, uncommitted files, ahead/behind, merged), `blueprint.py gate` (runs and records
+every repository's gate), lint reports unknown repositories.
+
+**Parallel epics.** `**Depends on**` is read: an epic is `blocked` until its dependencies are DONE in the
+checkout. A board in the hub's git directory records which worktree builds which epic: status marks
+those `elsewhere` and `next` skips them; `compile` claims an epic (`--take` moves a claim);
+`blueprint.py workspace <epic> --create` makes the epic's worktrees in the hub and every repository it
+changes. The hook refuses a compile that would switch the active feature under another live session in
+the same worktree. Decisions and amendments made on an epic's branch are numbered within the epic
+(`DR-E03-1`, `A-E03-1`), so parallel branches never collide. Feature numbers skip the folders other
+worktrees compiled.
+
+**A new machine, or one repository on its own.** Features are built from the hub only; getting it is one
+clone. `blueprint.py workspace setup [epic]` clones the repositories missing on this machine from their
+`remote` and fetches the others; a `remote` may be relative to the hub's own URL (`../desk.git`, resolved
+like git's relative submodule URLs). `workspace <epic> --create` continues a branch a remote has (the
+hub's, with its ticked tasks, and each repository's) instead of starting it again from the base, and
+takes the feature folder's name from the epic's branch. Status marks an epic whose branch exists, here or
+on a remote, but whose folder is not in this checkout as `started` (in progress on that branch, or merged
+into the base and only a pull or merge away) and moves on instead of offering to compile it again, also
+in a single repository with a branch per feature; it names the repositories the next epic needs that are not on this machine (`next.missing_repositories`,
+`next.setup`), and the dashboard shows both. `blueprint.py workspace link` writes a block into each code
+repository's `CLAUDE.md` that names its hub and how to clone it, so a session opened there points the
+user to the hub. The `.local.yml` file now overrides a repository's settings one by one instead of
+replacing its entry.
+
+**Guaranteed effort.** `effort:` now lists only the steps that must run at a set level (default
+discover, amend and review at `max`; `session` removes one); every other step runs at the session's level
+with no stop and no question. Those steps run their reasoning in a subagent started at that level
+(discover and amend in rounds: the subagent stops at a checkpoint, the main session asks the user, the
+answer goes back to it); the review runs in a fresh subagent that did not write the code. The PreToolUse
+hook reads the agent's real level: `blueprint.py require-effort <step>` and writes of a blueprint, its
+discovery checkpoints or a DONE review are refused below the level, naming the cause
+(`CLAUDE_CODE_EFFORT_LEVEL`, an organization cap, the model). `effort_model` picks the subagents' model.
+`effort_check` is gone.
+
+**Deterministic checks.** Bootstrap refuses a blueprint with lint errors or unresolved IDs
+(`--skip-lint` to override). Status reports the constitution `outdated` when the sections it is built
+from changed, and a review DONE only when review.md has evidence for every AC of every story. New
+`blueprint.py activate`, `context` and `review-facts` give the hooks their facts (repositories and paths,
+preconditions, VERIFY-AT-BUILD lines, the next decision ID, the ACs needing evidence, diffs).
+
+**Metrics and estimates.** The `stop` event summarises the session's transcript into the hub's git
+directory: per epic (and per blueprint for discovery and amendments) agent time split into model and
+tool time, time waiting for the user, human gates, tokens, cost, models, effort levels, phases,
+repositories, subagents, task ticks and story times (stories, not tasks: ticks come in batches).
+`blueprint.py metrics [<epic>] [--brief] [--write] [--backfill]`, `blueprint.py estimate [<epic>]`
+(P50–P90 from finished epics; what remains by seeded Monte Carlo over the `Depends on` graph with the
+parallelism seen so far). Compile records the estimate made before building; the review adds
+"Estimate vs actual". `metrics: local | commit | off`.
+
+**Dashboard.** `blueprint.py dashboard` serves a live page on 127.0.0.1: totals, remaining ranges and the
+finish date, live sessions (what each is doing, or how long it has waited for you), epics expandable to
+stories and tasks with their repositories and gates, a timeline with forecast ranges, where each epic's
+time went, and a per-repository view. `--export FILE` writes a single-file snapshot.
+`blueprint.py statusline` prints one line for Claude Code's status line. Everything in English with units.
+
+**Standard and public.** Config `schema: 2`; `blueprint.py migrate` (dry run, `--apply`) converts a 0.4
+project: config, repository fields (keeping the prose as notes under the table), traces and managed
+blocks without ids. The runtime no longer guesses for those layouts; status reports `migration_needed`.
+Managed blocks always carry their blueprint id (`id=default` with one blueprint). The script is a package
+(`scripts/speckit_blueprint/`) behind `scripts/blueprint.py`, and writes no `__pycache__` into projects.
+The YAML subset reads inline maps. `docs/DESIGN.md` records the design. Up to date with idea-to-blueprint
+v1.1.1 (38cbec9), unchanged.
+
 ## 0.4.0 — 2026-11-04
 
 Several blueprints in one project (one per product), without one touching another's files.

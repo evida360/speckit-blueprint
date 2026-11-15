@@ -1,13 +1,13 @@
 ---
-description: "Compile one blueprint epic into a spec-kit feature folder and make it active"
+description: "Compile one blueprint epic into a Spec Kit feature folder, claim it for this worktree and make it the active feature. Usually run by speckit-blueprint-flow."
 ---
 
 # Compile an epic
 
-Turns one `## Epic nn` of the blueprint into a spec-kit feature folder. A script resolves every ID the
-epic uses (personas, flows, screens, copy lines, entities, endpoints, integrations, edge cases, decisions,
-drivers, risks, open questions, sources) to its definition, so the build session reads only what this
-epic needs and never searches the blueprint.
+A script turns one `## Epic nn` into a Spec Kit feature folder: every ID the epic uses (personas, flows,
+screens, copy lines, entities, endpoints, integrations, edge cases, decisions, drivers, risks, open
+questions, sources) is resolved to its definition, so the build session reads only what this epic needs.
+Follow `.specify/extensions/blueprint/references/conventions.md`.
 
 ## User Input
 
@@ -15,40 +15,26 @@ epic needs and never searches the blueprint.
 $ARGUMENTS
 ```
 
-The input names the epic (`E03`, `3`, `Epic 03`), and in a project with several blueprints, which one:
-`desk:E03`, or `E03 --blueprint desk`. Without a blueprint, compile uses the active feature's blueprint
-(else the config's default); when the user's words point at another product, name it rather than relying
-on the default. If the input is empty, take `next.epic` (and `blueprint_id`) from
-`python3 .specify/extensions/blueprint/scripts/blueprint.py status --json`.
+The input names the epic (`E03`, `3`), qualified in a project with several blueprints (`desk:E03`). Empty
+input: take `next.epic` from `blueprint.py status --json`.
 
 ## Steps
 
-1. Run:
-
-   ```bash
-   python3 .specify/extensions/blueprint/scripts/blueprint.py compile E03        # or desk:E03
-   ```
-
-   Output: `specs/NNN-e03-<slug>/` (`specs/NNN-<id>-e03-<slug>/` when the config lists blueprints by id;
-   `number_base` sets where a blueprint's numbers start) with `spec.md`, `plan.md`, `research.md`, `quickstart.md`, and when
-   the epic touches them `data-model.md` and `contracts/`; a `.blueprint.json` trace; and
-   `.specify/feature.json` pointing at the folder, so spec-kit commands treat it as the active feature.
-   The trace records `blueprint_id`; an epic is found again by blueprint and epic together, so `E03` of
-   one blueprint never reaches another blueprint's folder.
-
-2. If the script refuses because the folder already has completed tasks, do not add `--force` on your own.
-   Tell the user that the epic is partly built and that a product change belongs in
-   `/speckit-blueprint-amend`, which decides how to handle built work.
-
-3. If `unresolved_ids` is not empty, the blueprint references something it never defines. Stop and fix the
-   blueprint (or ask the user when the right definition is not obvious), lint, and compile again. Do not
-   build on an unresolved ID.
-
-4. Do not edit the compiled files. They are regenerated on every compile, and a Claude Code hook blocks
-   hand edits.
-
-5. If the project uses spec-kit's git extension and the user wants a branch per epic, create it now
-   (`/speckit-git-feature` or `git switch -c <folder name>`), following the user's git rules.
-
-6. Report: folder, files with sizes, total size versus the blueprint size, and the next step —
-   `/speckit-tasks`, then `/speckit-analyze`.
+1. Run `blueprint.py compile <epic>`. It writes `spec.md`, `plan.md`, `research.md`, `quickstart.md`,
+   `data-model.md` and `contracts/` when the epic touches them, and the `.blueprint.json` trace; claims the
+   epic on the board for this worktree; and makes the folder the active feature. Its JSON names the
+   folder, the hub branch and, per repository, the base and branch.
+2. Refusals:
+   - completed tasks in the folder: the epic is partly built and a product change belongs in
+     `/speckit-blueprint-amend`. Never add `--force` on your own.
+   - another worktree builds the epic: continue it there. `--take` moves it here only when the user says
+     so.
+   - unresolved IDs, a repository the config does not list, or a schema-1 field: fix the blueprint
+     through `/speckit-blueprint-amend` (or run `blueprint.py migrate`), lint, compile again. Never build on
+     an unresolved ID.
+3. Never edit the compiled files: they are regenerated on every compile, and a hook blocks hand edits.
+4. Branches: if the project creates a branch per feature (Spec Kit's git extension, or its rules), use the
+   branch names in the JSON. To build this epic beside another one, use `blueprint.py workspace <epic>
+   --create` instead: it makes the worktrees on those branches.
+5. Report the folder, the files with their sizes against the blueprint's size, the repositories with
+   their branches, and the next step: `/speckit-tasks`, then `/speckit-analyze`.

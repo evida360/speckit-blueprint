@@ -1,0 +1,189 @@
+"""Facts the context and review hooks used to work out by themselves, now computed: which repositories an
+epic changes and their git state, the gate results, preconditions, VERIFY-AT-BUILD lines, the next
+decision ID, the ACs a review must give evidence for.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from .core import TRACE_FILE, active_feature, read_trace, task_counts
+from .config import bp_config
+from .model import Blueprint, label_block
+from .repos import base_branch, branch_name, facts, git, registry, run_gate
+from .board import epic_key, load as load_board, record_gate
+from .compiler import find_feature_dir, qualify
+from .status import epic_acs, project_status, review_check
+
+
+def epic_repo_rows(root: Path, cfg: dict, epic: dict, trace: dict | None = None) -> list[dict]:
+    """The epic's repositories with the path to work in: the epic's own worktree when the board has one
+    (parallel epics), else the repository's checkout."""
+    reg = registry(cfg, root)
+    held = load_board(root).get("epics", {}).get(epic_key(cfg["id"], epic["id"]), {})
+    rows = (trace or {}).get("repositories") or []
+    if not rows:
+        from .compiler import repo_rows
+
+        d = find_feature_dir(root, cfg, epic["id"])
+        rows = repo_rows(cfg, root, epic, d.name if d else "")
+    out = []
+    for r in rows:
+        entry = reg.get(r["name"], {})
+        wt = ((held.get("repositories") or {}).get(r["name"]) or {}).get("worktree")
+        path = wt if wt and Path(wt).is_dir() else entry.get("path", "")
+        out.append({**r, "path": path, "gate": entry.get("gate", ""), "hub": entry.get("hub", False),
+                    "configured": bool(entry)})
+    return out
+
+
+def repos_facts(root: Path, cfg: dict, bp: Blueprint, epic: dict) -> dict:
+    d = find_feature_dir(root, cfg, epic["id"])
+    trace = read_trace(d) if d else None
+    gates = load_board(root).get("gates", {}).get(epic_key(cfg["id"], epic["id"]), {})
+    out = []
+    for r in epic_repo_rows(root, cfg, epic, trace):
+        f = facts(Path(r["path"]), r.get("branch", ""), r.get("base", "")) if r["path"] else {"exists": False}
+        out.append({**r, **f, "last_gate": gates.get(r["name"])})
+    return {"blueprint_id": cfg["id"], "epic": epic["id"], "repositories": out}
+
+
+def gate(root: Path, cfg: dict, bp: Blueprint, epic: dict, only: str | None = None) -> dict:
+    """Run every target repository's gate in order (the config's `gate` command for each)."""
+    d = find_feature_dir(root, cfg, epic["id"])
+    rows = epic_repo_rows(root, cfg, epic, read_trace(d) if d else None)
+    results, missing = [], []
+    for r in rows:
+        if only and r["name"] != only:
+            continue
+        if not r["gate"]:
+            missing.append(r["name"])
+            continue
+        res = run_gate(r["gate"], Path(r["path"]))
+        res["repository"] = r["name"]
+        record_gate(root, epic_key(cfg["id"], epic["id"]), r["name"], res)
+        results.append(res)
+    return {"epic": epic["id"], "results": results, "no_gate_configured": missing,
+            "note": ("Repositories without a `gate` in the config: run the gate the plan's Technical Context "
+                     "names for them.") if missing else None}
+
+
+def next_decision_id(root: Path, cfg: dict, eid: str) -> str:
+    """The next epic-scoped decision record, e.g. DR-E08-3 (DESK:DR-E08-3 in shared files)."""
+    p = root / cfg["decisions_path"]
+    text = p.read_text(encoding="utf-8") if p.is_file() else ""
+    nums = [int(n) for n in re.findall(r"DR-" + re.escape(eid) + r"-(\d+)", text)]
+    return qualify(cfg, f"DR-{eid}-{max(nums, default=0) + 1}")
+
+
+def plan_section(plan: Path, heading: str) -> str:
+    if not plan.is_file():
+        return ""
+    text = plan.read_text(encoding="utf-8")
+    m = re.search(r"^## " + re.escape(heading) + r"\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def feature_context(root: Path, cfg: dict) -> tuple[Path | None, dict | None]:
+    fd = active_feature(root)
+    if not fd:
+        return None, None
+    d = root / fd
+    trace = read_trace(d)
+    return (d, trace) if trace else (d, None)
+
+
+def context_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
+    """For the before_implement hook: does it apply, and what must hold before the first task."""
+    d, trace = feature_context(root, cfg)
+    if trace is None:
+        return {"applies": False, "why": "the active feature was not compiled from a blueprint"}
+    bcfg = bp_config(cfg, trace.get("blueprint_id") or cfg["id"])
+    if bcfg["id"] != cfg["id"]:
+        bp = Blueprint(root / bcfg["blueprint_path"])
+    epic = bp.epic(trace["epic"][1:])
+    st = project_status(root, bcfg)
+    row = next((r for r in st.get("epics", []) if r["epic"] == trace["epic"]), {})
+    repos = repos_facts(root, bcfg, bp, epic)["repositories"] if epic else []
+    total, done = task_counts(d / "tasks.md")
+    problems = []
+    if row.get("blocked_by"):
+        problems.append(f"dependencies not done in this checkout: {', '.join(row['blocked_by'])}")
+    if row.get("changed_since_compile"):
+        problems.append("the blueprint changed since this epic was compiled: " + ", ".join(row["changed_since_compile"][:10]))
+    for r in repos:
+        if not r.get("exists"):
+            problems.append(f"{r['name']}: {r.get('path') or 'no path'} does not exist "
+                            "(`blueprint.py workspace setup` clones it from its `remote`)")
+        elif r.get("git") and r.get("branch") and not r.get("on_branch") and not r.get("hub"):
+            pushed = f"; it continues {r['remote_branch']}, pushed from another machine" if r.get("remote_branch") else ""
+            problems.append(f"{r['name']}: on branch {r.get('current_branch')}, expected {r['branch']} "
+                            f"(`blueprint.py workspace {trace['epic']} --create` sets up the worktrees{pushed})")
+    verify = plan_section(d / "plan.md", "Preconditions and VERIFY-AT-BUILD")
+    return {
+        "applies": True,
+        "blueprint_id": bcfg["id"],
+        "epic": trace["epic"],
+        "title": trace.get("title"),
+        "feature_directory": d.relative_to(root).as_posix(),
+        "spec": (d / "spec.md").relative_to(root).as_posix(),
+        "rules_command": f"python3 .specify/extensions/blueprint/scripts/blueprint.py rules --blueprint {bcfg['id']}",
+        "tasks": {"done": done, "total": total},
+        "repositories": [{k: r.get(k) for k in ("name", "order", "role", "path", "branch", "base", "current_branch",
+                                                 "on_branch", "dirty", "gate", "last_gate")} for r in repos],
+        "problems": problems,
+        "preconditions_and_verify_at_build": verify,
+        "decisions_log": bcfg["decisions_path"],
+        "next_decision_id": next_decision_id(root, bcfg, trace["epic"]),
+        "amendment_id_format": f"A-{trace['epic']}-<n> on this epic's branch",
+    }
+
+
+def diffstat(path: Path, base: str, branch: str) -> dict:
+    out = {}
+    if base and branch:
+        rc, s = git(path, "diff", "--shortstat", f"{base}...{branch}")
+        out["committed"] = s if rc == 0 else None
+    rc, s = git(path, "diff", "--shortstat", "HEAD")
+    out["uncommitted"] = s if rc == 0 else None
+    return out
+
+
+def review_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
+    """For the review: the ACs that need evidence, the repositories and their diffs, the last gates."""
+    d, trace = feature_context(root, cfg)
+    if trace is None:
+        return {"applies": False, "why": "the active feature was not compiled from a blueprint"}
+    bcfg = bp_config(cfg, trace.get("blueprint_id") or cfg["id"])
+    if bcfg["id"] != cfg["id"]:
+        bp = Blueprint(root / bcfg["blueprint_path"])
+    epic = bp.epic(trace["epic"][1:])
+    acs = trace.get("acs") or (epic_acs(epic) if epic else {})
+    status, missing = review_check(d / "review.md", acs)
+    repos = repos_facts(root, bcfg, bp, epic)["repositories"] if epic else []
+    for r in repos:
+        if r.get("exists") and r.get("git"):
+            r["diff"] = diffstat(Path(r["path"]), r.get("base", ""), r.get("branch", ""))
+    total, done = task_counts(d / "tasks.md")
+    return {
+        "applies": True,
+        "blueprint_id": bcfg["id"],
+        "epic": trace["epic"],
+        "feature_directory": d.relative_to(root).as_posix(),
+        "review": (d / "review.md").relative_to(root).as_posix(),
+        "review_status": status,
+        "acs_needing_evidence": acs,
+        "acs_missing_evidence": missing,
+        "tasks": {"done": done, "total": total},
+        "review_checklist": bcfg["review_checklist_path"],
+        "decisions_log": bcfg["decisions_path"],
+        "decisions_this_epic": sorted(set(re.findall(r"(?:[A-Z][A-Z0-9]*:)?DR-" + re.escape(trace["epic"]) + r"-\d+",
+                                                     (root / bcfg["decisions_path"]).read_text(encoding="utf-8")
+                                                     if (root / bcfg["decisions_path"]).is_file() else ""))),
+        "repositories": [{k: r.get(k) for k in ("name", "order", "role", "path", "branch", "base", "current_branch",
+                                                 "dirty", "merged", "ahead", "behind", "diff", "gate", "last_gate", "contracts")}
+                         for r in repos],
+        "effort": bcfg["effort"].get("review"),
+        "effort_model": bcfg.get("effort_model", "inherit"),
+    }

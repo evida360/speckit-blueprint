@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: blueprint
   name: "Blueprint"
-  version: "0.4.0"
-  description: "Evidence-backed product discovery into one blueprint, compiled into spec-kit features one epic at a time (Claude Code)"
+  version: "0.5.0"
+  description: "Evidence-backed product discovery into blueprints, compiled into Spec Kit features one epic at a time, across one or many repositories (Claude Code)"
   author: "Mohsen Samiei"
   repository: "https://github.com/mohsensamiei/speckit-blueprint"
   license: "MIT"
@@ -16,6 +16,8 @@ requires:
     - name: python3
       version: ">=3.9"
       required: true
+    - name: git
+      required: false
 
 provides:
   commands:
@@ -25,66 +27,56 @@ provides:
     - name: speckit.blueprint.discover
       file: commands/discover.md
       description: "Turn an idea into an evidence-backed build blueprint (intake, research, decisions, epics)"
-    - name: speckit.blueprint.lint
-      file: commands/lint.md
-      description: "Lint the blueprint for the structural guarantees compile and build sessions rely on"
-    - name: speckit.blueprint.bootstrap
-      file: commands/bootstrap.md
-      description: "Compile the constitution, review checklist, decisions log and CLAUDE.md block from the blueprint"
-    - name: speckit.blueprint.compile
-      file: commands/compile.md
-      description: "Compile one blueprint epic into a spec-kit feature folder and make it active"
-    - name: speckit.blueprint.context
-      file: commands/context.md
-      description: "Load the active feature's spec and build rules before implementation (hook)"
-    - name: speckit.blueprint.review
-      file: commands/review.md
-      description: "Self-review an implemented epic against its ACs and the review checklist, then write the handoff"
     - name: speckit.blueprint.amend
       file: commands/amend.md
-      description: "Change the blueprint deliberately (A-nn amendment) and recompile the affected epics"
-    - name: speckit.blueprint.status
-      file: commands/status.md
-      description: "Show blueprint progress per epic and the next step"
-    - name: speckit.blueprint.guard
-      file: commands/guard.md
-      description: "Internal: Claude Code PreToolUse guard that blocks hand edits of compiled files"
+      description: "Change a blueprint deliberately (amendment) and recompile the epics it affects"
+    - name: speckit.blueprint.compile
+      file: commands/compile.md
+      description: "Compile one blueprint epic into a Spec Kit feature folder and make it active"
+    - name: speckit.blueprint.context
+      file: commands/context.md
+      description: "Before implement (hook): load a blueprint feature's spec and rules, check its preconditions"
+    - name: speckit.blueprint.review
+      file: commands/review.md
+      description: "After implement (hook): independent review against the ACs and checklist, then the handoff"
+    - name: speckit.blueprint.hook
+      file: commands/hook.md
+      description: "Internal: handler for Claude Code events (session start, tool use, stop)"
 
   config:
     - name: "blueprint-config.yml"
       template: "config-template.yml"
-      description: "Blueprints (one or several), compiled sections and guard switch"
+      description: "Blueprints, repositories, guaranteed effort per step, metrics and the guard"
       required: false
 
 hooks:
   before_implement:
     command: speckit.blueprint.context
     optional: false
-    description: "For blueprint features only: load spec.md (ACs, copy, edge cases) and the build rules"
+    description: "For blueprint features only: load spec.md and the build rules, check preconditions"
   after_implement:
     command: speckit.blueprint.review
     optional: false
-    description: "For blueprint features only: self-review against the review checklist and write review.md"
-  before_specify:
-    command: speckit.blueprint.flow
-    optional: true
-    prompt: "Is this feature an epic of one of this project's blueprints (blueprint.py status --json lists them)? If so, compile it instead of writing a free-form spec"
-    description: "Offer to compile a blueprint epic instead of a free-form spec; other features continue as usual"
+    description: "For blueprint features only: independent review against the ACs and checklist, then review.md"
 
 events:
   session_start:
-    command: speckit.blueprint.status
+    command: speckit.blueprint.hook
     timeout: 20
   pre_tool_use:
-    command: speckit.blueprint.guard
-    matcher: "Edit|Write|MultiEdit|NotebookEdit"
+    command: speckit.blueprint.hook
+    matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash"
     timeout: 10
+  stop:
+    command: speckit.blueprint.hook
+    timeout: 30
 
 tags:
   - "blueprint"
   - "discovery"
   - "research"
   - "planning"
+  - "multi-repo"
   - "claude"
 
 defaults:

@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blueprint dashboard</title>
+<!--
+  speckit-blueprint dashboard: one self-contained page (no external resources).
+  Live: `blueprint.py dashboard` serves this file at / and the state at /api/state; the page polls every 3 s.
+  Export: the server puts `window.__STATE__` into the placeholder comment before the main script; the page
+  then renders that snapshot once and never polls.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f3f3f0; --surface: #fcfcfb; --surface-2: #f0efec; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6b6a65;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, .10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --act: #2a78d6; --fc: #86b6ef; --fc90: #b7d3f6;
+  --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b; --violet: #6250d6;
+  --good-ink: #006300; --crit-ink: #b42323; --warn-bg: #fff5dc; --crit-bg: #fdeceb; --info-bg: #eaf2fc; --focus: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0d0d0d; --surface: #1a1a19; --surface-2: #262624; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #9c9b94;
+    --grid: #2c2c2a; --axis: #4a4a46; --border: rgba(255, 255, 255, .10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --act: #86b6ef; --fc: #3987e5; --fc90: #184f95;
+    --violet: #9085e9; --good-ink: #3fc23f; --crit-ink: #f08a8a; --warn-bg: #33270d; --crit-bg: #3a1717; --info-bg: #142338; --focus: #6da7ec;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; }
+main { max-width: 1240px; margin: 0 auto; padding: 16px 24px 40px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
+h4 { font-size: 12.5px; margin: 14px 0 6px; color: var(--ink-2); font-weight: 600; }
+code { font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.meta { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.empty { color: var(--muted); margin: 4px 0; }
+.nowrap { white-space: nowrap; }
+header.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin: 6px 0 16px; }
+.hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
+.sub { font-size: 12.5px; color: var(--ink-2); }
+.pick { font-size: 12.5px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+.live { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--axis); flex: none; }
+.live.ok::before { background: var(--good); }
+.live.stale::before { background: var(--warn); }
+.live.bad::before { background: var(--crit); }
+.live.stale, .live.bad { color: var(--ink); font-weight: 600; }
+.banner { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; background: var(--surface); }
+.banner.err { background: var(--crit-bg); }
+.banner.warn { background: var(--warn-bg); }
+.banner.info { background: var(--info-bg); }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
+.kpi, section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+section.card { margin: 0 0 16px; }
+.kpi .lbl { font-size: 12.5px; color: var(--ink-2); }
+.kpi .val { font-size: 26px; font-weight: 600; line-height: 1.15; margin: 4px 0 8px; }
+.kpi .sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.meter { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 8px; }
+.meter i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
+.count { font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 1px 8px; margin-left: 4px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 12px 7px 0; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.num { text-align: right; }
+td.path { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; max-width: 48ch; }
+td.gate code { overflow-wrap: normal; }
+table.mini { font-size: 13px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+.dot.working { background: var(--good); }
+.dot.waiting { background: var(--warn); }
+.chip { display: inline-block; font-size: 11.5px; line-height: 1.5; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); margin: 1px 4px 1px 0; white-space: nowrap; }
+.chip.dim { opacity: .6; }
+.badge { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.b-done i { background: var(--good); }
+.b-building i, .b-elsewhere i { background: var(--s1); }
+.b-implemented i { background: var(--violet); }
+.b-blocked i { background: var(--warn); }
+.b-stale i { background: var(--serious); }
+.warnline { display: block; margin: 4px 0 0; font-size: 12.5px; color: var(--ink); font-weight: 400; }
+.warnline::before { content: "!"; display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: var(--warn); color: #0b0b0b; font-size: 11px; font-weight: 700; margin-right: 6px; }
+.warnline.inline { display: inline; }
+.ok { color: var(--good-ink); }
+.bad { color: var(--crit-ink); }
+.bphead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 4px 0 10px; }
+.ep-group + .ep-group { margin-top: 24px; }
+.next { font-size: 13px; color: var(--ink-2); }
+.ep-cols, details.epic > summary { display: grid; grid-template-columns: minmax(0, 1fr) 176px 150px 120px 120px; gap: 14px; align-items: start; padding: 9px 8px; }
+.ep-cols { font-size: 12px; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--grid); padding-top: 0; }
+details.epic { border-bottom: 1px solid var(--grid); }
+details.epic > summary { cursor: pointer; list-style: none; border-radius: 6px; }
+details.epic > summary::-webkit-details-marker { display: none; }
+details.epic > summary:hover { background: var(--surface-2); }
+summary:focus-visible, select:focus-visible, g.row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-title { position: relative; padding-left: 18px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.c-title::before { content: ""; position: absolute; left: 3px; top: 5px; border: 5px solid transparent; border-left: 6px solid var(--muted); transition: transform .15s; transform-origin: 3px 5px; }
+details[open] > summary .c-title::before { transform: rotate(90deg); }
+.eid { color: var(--ink-2); margin-right: 4px; }
+.c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.c-tasks { display: flex; align-items: center; gap: 8px; }
+.bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
+.frac { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.epic-body { padding: 4px 8px 14px 26px; }
+.note { font-size: 12.5px; color: var(--ink-2); margin: 6px 0; }
+.story { margin: 4px 0 8px; }
+.story-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-weight: 600; font-size: 13px; }
+.story-h .meta { display: inline; }
+.sid { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sst { font-size: 11.5px; font-weight: 400; color: var(--ink-2); }
+.sst::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--axis); }
+.sst.s-done::before { background: var(--good); }
+.sst.s-in-progress::before { background: var(--s1); }
+ul.tasks { list-style: none; margin: 4px 0 6px; padding: 0; }
+ul.tasks li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 2px 6px; font-size: 13px; border-radius: 4px; }
+ul.tasks li.done .ttl { color: var(--ink-2); }
+ul.tasks li.next { background: var(--info-bg); }
+.cb { flex: none; position: relative; top: 2px; width: 13px; height: 13px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.cb.on { background: var(--good); border-color: var(--good); }
+.cb.on::after { content: ""; position: absolute; left: 3px; top: 0; width: 3.5px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.tid { background: none; padding: 0; color: var(--ink-2); }
+.seed { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+.ttl { flex: 1 1 220px; min-width: 0; }
+.when { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+li.next .when { color: var(--ink); font-weight: 600; }
+dl.details { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 12px 0 0; font-size: 12.5px; }
+dl.details div { display: flex; gap: 6px; }
+dl.details dt { color: var(--muted); }
+dl.details dd { margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--ink-2); margin: 0 0 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.sw.line { width: 2px; height: 14px; border-radius: 0; background: var(--ink-2); }
+svg.chart { display: block; max-width: 100%; height: auto; font: 11.5px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+svg .lbl { fill: var(--ink); }
+svg .grp { fill: var(--ink); font-weight: 650; }
+svg .axis { fill: var(--muted); font-variant-numeric: tabular-nums; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .now { stroke: var(--ink-2); stroke-width: 1.5; }
+svg .hit { fill: transparent; }
+svg g.row:hover .hit, svg g.row:focus .hit { fill: var(--surface-2); }
+svg g.row { outline: none; }
+svg .in { fill: #fff; font-weight: 600; }
+.act { fill: var(--act); background: var(--act); }
+.fc { fill: var(--fc); background: var(--fc); }
+.fc90 { fill: var(--fc90); background: var(--fc90); }
+.m1 { fill: var(--s1); background: var(--s1); }
+.m2 { fill: var(--s2); background: var(--s2); }
+.m3 { fill: var(--s3); background: var(--s3); }
+details.tv { margin-top: 10px; font-size: 12.5px; }
+details.tv > summary { cursor: pointer; color: var(--ink-2); width: max-content; }
+details.tv table { margin-top: 6px; }
+footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px; }
+#tip { position: fixed; z-index: 10; pointer-events: none; max-width: 360px; padding: 7px 10px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 12px; line-height: 1.45; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .22); }
+[hidden] { display: none !important; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 900px) {
+  .ep-cols { display: none; }
+  details.epic > summary { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; }
+  .c-title { grid-column: 1 / -1; }
+  .c-num { text-align: left; }
+  details.epic > summary [data-label]::before { content: attr(data-label); display: block; font-size: 11.5px; color: var(--muted); }
+  .c-tasks { flex-wrap: wrap; }
+  .c-tasks::before { width: 100%; }
+  .epic-body { padding-left: 8px; }
+}
+@media (max-width: 700px) { main { padding: 12px 16px 32px; } }
+@media (prefers-reduced-motion: reduce) { .c-title::before { transition: none; } }
+</style>
+</head>
+<body>
+<main id="main">
+  <header class="top"><div id="hdr" class="hdr"><h1>Blueprint dashboard</h1></div><span id="live" class="live">Connecting…</span></header>
+  <div id="fatal" class="banner err" role="alert" hidden></div>
+  <div id="banners"></div>
+  <div id="kpis" class="kpis"></div>
+  <section id="sessions" class="card" aria-label="Active sessions" hidden></section>
+  <section id="epics" class="card" aria-label="Epics" hidden></section>
+  <section id="timeline" class="card" aria-label="Timeline" hidden></section>
+  <section id="breakdown" class="card" aria-label="Where the time went" hidden></section>
+  <section id="repos" class="card" aria-label="Repositories" hidden></section>
+  <section id="discovery" class="card" aria-label="Discovery and amendments" hidden></section>
+  <footer id="foot"></footer>
+</main>
+<div id="tip" role="tooltip" hidden></div>
+<!--STATE-->
+<script>
+(() => {
+  'use strict';
+
+  // ---------- small helpers; the state is read defensively everywhere ----------
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const POLL_MS = 3000, STALE_MS = 10000;
+  const arr = v => (Array.isArray(v) ? v : []);
+  const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const num = v => (isNum(v) ? v : 0);
+  const sum = (list, f) => list.reduce((t, x) => t + num(f(x)), 0);
+  const pad2 = n => String(n).padStart(2, '0');
+  const base = p => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
+  const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : '');
+  const clip = (s, n) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s);
+  const domId = (prefix, key) => `${prefix}-${String(key).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+
+  // ---------- HTML: every interpolated value is escaped unless it is already markup (Raw) ----------
+  class Raw { constructor(s) { this.s = s; } toString() { return this.s; } }
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ESC[c]);
+  const part = v => (v == null || v === false ? '' : v instanceof Raw ? v.s : Array.isArray(v) ? v.map(part).join('') : esc(v));
+  const html = (strings, ...vals) => new Raw(strings.reduce((out, s, i) => out + part(vals[i - 1]) + s));
+  const join = (list, sep) => new Raw(list.map(part).filter(Boolean).join(esc(sep)));
+  const OPEN = new Raw(' open'), SELECTED = new Raw(' selected');
+
+  // ---------- units, formatted in one place (the same rules as units.py) ----------
+  function dur(seconds, calendar) {
+    if (!isNum(seconds)) return '—';
+    const s = Math.max(0, Math.round(seconds));
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (d) return h ? `${d}d ${h}h` : `${d}d`;
+    if (h) return m ? `${h}h ${m}m` : `${h}h`;
+    if (m) return calendar || !sec || m >= 10 ? `${m}m` : `${m}m ${sec}s`;
+    return `${sec}s`;
+  }
+  const cal = s => dur(s, true);
+  const money = (usd, estimated) => (isNum(usd)
+    ? '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (estimated ? '+' : '') : '—');
+  const tok = n => (!isNum(n) ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)));
+  function range(pair, f) {
+    const p = arr(pair), lo = isNum(p[0]) ? p[0] : p[1], hi = isNum(p[1]) ? p[1] : p[0];
+    if (!isNum(lo)) return '—';
+    const a = f(lo), b = f(hi);
+    return a === b ? a : `${a} – ${b}`;
+  }
+  // ISO timestamps (any offset, "Z", microseconds) to epoch ms; a bare date is local midnight.
+  const ISO = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](\d\d):(\d\d)(?::(\d\d)(?:[.,](\d+))?)?\s*(Z|[+-]\d\d:?\d\d)?)?$/i;
+  function ts(v) {
+    if (isNum(v)) return v < 1e11 ? v * 1000 : v;
+    const m = ISO.exec(String(v == null ? '' : v).trim());
+    if (!m) return null;
+    const y = +m[1], mo = +m[2] - 1, d = +m[3];
+    if (m[4] === undefined) return new Date(y, mo, d).getTime();
+    const f = [y, mo, d, +m[4], +m[5], +(m[6] || 0), m[7] ? Math.round(+('0.' + m[7]) * 1000) : 0];
+    if (!m[8]) return new Date(...f).getTime();
+    const z = m[8].toUpperCase() === 'Z' ? 0 : (m[8][0] === '-' ? -1 : 1) * (+m[8].slice(1, 3) * 60 + +m[8].slice(-2));
+    return Date.UTC(...f) - z * 60000;
+  }
+  const fdate = t => { const d = new Date(t); return `${MONTHS[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== new Date(ctx.now).getFullYear() ? ', ' + d.getFullYear() : ''}`; };
+  const ftime = t => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+  const fstamp = t => (new Date(t).toDateString() === new Date(ctx.now).toDateString() ? ftime(t) : `${fdate(t)} ${ftime(t)}`);
+
+  // ---------- page state ----------
+  const SNAPSHOT = typeof window.__STATE__ !== 'undefined';
+  const ui = { bp: 'all', open: new Set(), auto: new Set(), state: null, error: null, lastOk: 0 };
+  const ctx = { now: Date.now(), multi: false, index: new Map() };
+  const fromHash = /(?:^#|&)bp=([^&]*)/.exec(location.hash || '');
+  if (fromHash) { try { ui.bp = decodeURIComponent(fromHash[1]) || 'all'; } catch (_) { ui.bp = 'all'; } }
+
+  const blueprints = st => arr(st.blueprints).filter(b => b && typeof b === 'object');
+  const selected = st => (ui.bp === 'all' ? blueprints(st) : blueprints(st).filter(b => b.id === ui.bp));
+  const epicsOf = b => arr(b.epics).filter(e => e && typeof e === 'object');
+  const keyOf = (b, e) => String(e.key || `${b.id}:${e.id}`);
+  const bpName = b => String(b.product || b.id || 'Blueprint');
+  const inBp = key => ui.bp === 'all' || String(key || '').startsWith(ui.bp + ':');
+  function epicRef(key) { // "E01", or "desk:E01" when the project has several blueprints
+    const hit = ctx.index.get(key);
+    if (hit) return ctx.multi ? `${hit.b.id}:${hit.e.id}` : String(hit.e.id);
+    return ctx.multi ? String(key || '') : String(key || '').replace(/^[^:]*:/, '');
+  }
+
+  function prepare(st) {
+    ctx.now = SNAPSHOT ? ts(st.generated) || Date.now() : Date.now();
+    ctx.multi = blueprints(st).length > 1;
+    ctx.index = new Map();
+    for (const b of blueprints(st)) for (const e of epicsOf(b)) ctx.index.set(keyOf(b, e), { b, e });
+    if (ui.bp !== 'all' && !blueprints(st).some(b => b.id === ui.bp)) ui.bp = 'all';
+    for (const [key, { e }] of ctx.index) { // the epic being built starts expanded, once
+      if ((e.state === 'in-progress' || e.state === 'implemented') && !ui.auto.has(key)) { ui.auto.add(key); ui.open.add(key); }
+    }
+  }
+
+  // ---------- header, banners, KPI cards ----------
+  function header(st) {
+    const list = blueprints(st);
+    const one = list.length === 1 ? list[0] : null;
+    const opts = [{ id: 'all', label: 'All' }].concat(list.map(b => ({ id: b.id, label: b.product && b.product !== b.id ? `${b.product} (${b.id})` : String(b.id) })));
+    const pick = list.length > 1 ? html`<label class="pick">Blueprint <select id="bp">${opts.map(o => html`<option value="${o.id}"${o.id === ui.bp ? SELECTED : ''}>${o.label}</option>`)}</select></label>` : '';
+    return html`<div><h1>${st.project || 'Project'}</h1><div class="sub">${one && one.product ? `${one.product} · ` : ''}blueprint dashboard</div></div>${pick}`;
+  }
+
+  function banners(st) {
+    const out = [];
+    if (ui.error) {
+      out.push(html`<div class="banner err" role="alert"><strong>${st ? 'Could not refresh.' : 'Could not load the dashboard state.'}</strong> ${ui.error}${st && ui.lastOk ? html` <span class="muted">Showing the last good state, from ${ftime(ui.lastOk)}.</span>` : ''}</div>`);
+    }
+    if (!st) return out.length || SNAPSHOT ? out : html`<p class="empty">Loading the dashboard state…</p>`;
+    for (const b of selected(st)) {
+      const why = arr(b.migration_needed);
+      if (why.length) out.push(html`<div class="banner warn"><strong>Migration needed${ctx.multi ? ` in ${bpName(b)}` : ''}.</strong>${why.map(r => html`<div>• ${r}</div>`)}<div>Run <code>blueprint.py migrate</code>.</div></div>`);
+    }
+    if (st.metrics === 'off') out.push(html`<div class="banner info"><strong>Metrics are off.</strong> Time, cost and forecasts need <code>metrics: local</code> (or <code>commit</code>) in the config.</div>`);
+    return out;
+  }
+
+  function mergeRemaining(list) {
+    const add = k => [0, 1].map(i => sum(list, r => arr(r[k])[i]));
+    const latest = i => list.map(r => arr(r.finish)[i]).filter(Boolean).sort().pop();
+    return {
+      agent_s: add('agent_s'), cost_usd: add('cost_usd'), tokens: add('tokens'), epics: sum(list, r => r.epics),
+      calendar_s: [0, 1].map(i => Math.max(0, ...list.map(r => num(arr(r.calendar_s)[i])))),
+      finish: [latest(0), latest(1)], parallelism: Math.max(1, ...list.map(r => num(r.parallelism))),
+    };
+  }
+
+  const card = (label, value, subs) => html`<div class="kpi"><div class="lbl">${label}</div><div class="val">${value}</div>${subs.filter(Boolean).map(s => html`<div class="sub">${s}</div>`)}</div>`;
+
+  function kpis(st) {
+    const sel = selected(st), built = sel.filter(b => b.state !== 'no-blueprint');
+    const epics = sel.flatMap(epicsOf), acts = epics.map(e => obj(e.actual));
+    const acs = sum(sel, b => (isNum(b.acs_total) ? b.acs_total : sum(epicsOf(b), e => e.acs)));
+    const acsDone = sum(sel, b => (isNum(b.acs_done) ? b.acs_done : sum(epicsOf(b).filter(e => e.state === 'done'), e => e.acs)));
+    const pct = acs ? Math.round((100 * acsDone) / acs) : 0;
+    const firsts = acts.map(a => ts(a.first)).filter(isNum);
+    const progress = card('Progress', `${pct}%`, [
+      html`<span class="meter" role="img" aria-label="${pct}% of acceptance criteria done"><i style="width:${pct}%"></i></span>`,
+      `${acsDone} of ${acs} ACs · ${epics.filter(e => e.state === 'done').length} of ${plural(epics.length, 'epic')}`,
+      firsts.length ? `Started ${fdate(Math.min(...firsts))}` : '',
+    ]);
+    const off = st.metrics === 'off';
+    const disc = sel.flatMap(b => Object.values(obj(b.discovery)).map(obj));
+    const estimated = acts.some(a => a.cost_estimated);
+    const spent = off ? card('Spent', '—', ['Metrics are off']) : card('Spent', money(sum(acts, a => a.cost_usd) + sum(disc, d => d.cost_usd), estimated), [
+      `${dur(sum(acts, a => a.agent_s) + sum(disc, d => d.agent_s))} agent time · ${tok(sum(acts, a => a.tokens) + sum(disc, d => d.tokens))} tokens`,
+      estimated ? '+ includes an estimate for sessions still running' : '',
+    ]);
+    const rems = built.map(b => b.remaining).filter(r => r && typeof r === 'object');
+    const rem = rems.length > 1 ? mergeRemaining(rems) : rems[0] || null;
+    const need = off ? 'Metrics are off' : !built.length ? 'No blueprint yet' : 'Needs one finished epic with recorded sessions';
+    if (!rem || !num(rem.epics)) {
+      const allDone = rem && built.length && built.every(b => b.state === 'all-done' || epicsOf(b).every(e => e.state === 'done'));
+      return [progress, spent, card('Remaining P50 – P90', allDone ? 'Nothing left' : '—', [allDone ? 'Every epic is done' : need]),
+        card('Forecast finish', allDone ? 'Done' : '—', [allDone ? '' : need])];
+    }
+    const conf = String((built.find(b => b.confidence) || {}).confidence || 'none');
+    const hist = Math.max(0, ...built.map(b => num(b.history)));
+    const k = Math.max(1, Math.round(num(rem.parallelism)));
+    return [progress, spent,
+      card('Remaining P50 – P90', range(rem.cost_usd, money), [`${range(rem.agent_s, dur)} agent time`, `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`]),
+      card('Forecast finish', range(arr(rem.finish).map(ts), fdate), [`${plural(num(rem.epics), 'epic')} left · ${plural(k, 'epic')} at a time${rems.length > 1 ? ' per blueprint' : ''}`,
+        isNum(arr(rem.calendar_s)[0]) ? `${range(rem.calendar_s, cal)} of calendar time` : '']),
+    ];
+  }
+
+  // ---------- live sessions ----------
+  function activity(s) {
+    const t = isNum(s.for_s) ? ` · ${dur(s.for_s)}` : '';
+    if (s.kind === 'waiting') return `Waiting for you${t}`;
+    if (s.kind === 'thinking') return `Thinking${t}`;
+    if (s.kind !== 'tool') return html`<span class="muted">Starting</span>`;
+    const tool = String(s.tool || 'a tool'), d = String(s.detail || ''), file = base(d) || 'a file';
+    let what;
+    if (tool === 'Bash') what = d ? html`Running <code title="${d}">${d.replace(/^(\s*cd\s+[^;&|]+?\s*&&\s*)+/, '') || d}</code>` : 'Running a command';
+    else if (/^(Edit|MultiEdit|NotebookEdit)$/.test(tool)) what = `Editing ${file}`;
+    else if (tool === 'Write') what = `Writing ${file}`;
+    else if (tool === 'Read') what = `Reading ${file}`;
+    else if (tool === 'Grep' || tool === 'Glob') what = d ? html`Searching <code>${d}</code>` : 'Searching';
+    else if (tool === 'Agent' || tool === 'Task') what = `Running a subagent${d ? `: ${d}` : ''}`;
+    else what = d ? html`${tool} <span class="muted">${d}</span>` : `Using ${tool}`;
+    return html`${what}${t}`;
+  }
+
+  function sessions(st) {
+    const rows = arr(st.sessions).filter(s => s && typeof s === 'object' && inBp(s.epic));
+    const row = s => {
+      const waiting = s.kind === 'waiting', hit = ctx.index.get(s.epic);
+      const epic = s.epic ? html`<strong>${epicRef(s.epic)}</strong>${hit && hit.e.title ? html` <span class="muted">${hit.e.title}</span>` : ''}` : html`<span class="muted">${s.feature ? base(s.feature) : 'No epic'}</span>`;
+      return html`<tr><td class="nowrap"><span class="dot ${waiting ? 'waiting' : 'working'}"></span>${waiting ? 'Waiting' : 'Working'}</td><td>${epic}</td>
+        <td title="${s.worktree || ''}">${base(s.worktree) || '—'}</td><td>${activity(s)}</td><td>${s.model || '—'}${s.effort ? html` <span class="muted">· ${s.effort}</span>` : ''}</td></tr>`;
+    };
+    const body = rows.length
+      ? html`<div class="scroll"><table><thead><tr><th>Status</th><th>Epic</th><th>Worktree</th><th>Activity</th><th>Model · effort</th></tr></thead><tbody>${rows.map(row)}</tbody></table></div>`
+      : html`<p class="empty">No live sessions. A session counts as live while its transcript keeps being written (the last 15 minutes).</p>`;
+    return html`<h2>Active sessions${rows.length ? html`<span class="count">${rows.length}</span>` : ''}</h2>${body}`;
+  }
+
+  // ---------- epics ----------
+  function stateOf(e) {
+    const s = e.state, w = obj(e.elsewhere);
+    if (s === 'done') return ['done', 'Done', ''];
+    if (e.elsewhere && typeof e.elsewhere === 'object') return ['elsewhere', `Building in ${base(w.worktree) || 'another worktree'}`, w.state ? `there: ${String(w.state).replace('-', ' ')}` : ''];
+    const sv = obj(e.started);
+    if (e.started && typeof e.started === 'object') return sv.merged_into
+      ? ['elsewhere', 'Merged', `in ${sv.merged_into}; bring it in`]
+      : sv.local ? ['elsewhere', 'On a branch', `${sv.branch || ''}`] : ['elsewhere', 'Pushed', `on ${sv.remote || 'a remote branch'}`];
+    if (s === 'in-progress') return ['building', 'Building', ''];
+    if (s === 'implemented') return ['implemented', 'Implemented', arr(e.review_missing).length ? 'review incomplete' : 'awaiting review'];
+    if (arr(e.blocked_by).length) return ['blocked', 'Blocked', s ? String(s).replace('-', ' ') : ''];
+    if (s === 'stale') return ['stale', 'Stale', 'blueprint changed since compile'];
+    return ['planned', 'Planned', s ? String(s).replace('-', ' ') : ''];
+  }
+
+  function nextStep(n) {
+    n = obj(n);
+    if (!n.command) return '';
+    const cmd = String(n.command);
+    if (cmd === 'wait') return html`<span class="next">Waiting: ${n.why || 'every remaining epic is blocked or in progress elsewhere.'}</span>`;
+    const label = cmd === 'bootstrap' || cmd === 'migrate' ? `blueprint.py ${cmd}` : `/${cmd}`;
+    return html`<span class="next">Next: <code title="${n.run || ''}">${label}</code>${n.epic ? ` ${n.epic}` : ''}${n.why ? ` — ${n.why}` : ''}${n.effort ? html` <span class="muted">(runs at effort ${n.effort})</span>` : ''}</span>`;
+  }
+
+  function epicsSection(st) {
+    const sel = selected(st);
+    const group = b => {
+      const list = epicsOf(b), named = ctx.multi;
+      const head = html`<div class="bphead">${named ? html`<strong>${bpName(b)}</strong>` : ''}${list.length ? html`<span class="muted">${list.filter(e => e.state === 'done').length} of ${plural(list.length, 'epic')} done</span>` : ''}${b.state === 'no-blueprint' ? '' : nextStep(b.next)}</div>`;
+      if (b.state === 'no-blueprint') return html`<div class="ep-group">${head}<p class="empty">No blueprint yet — run discovery: <code>/speckit-blueprint-discover</code>${b.blueprint ? html` (it writes <code>${b.blueprint}</code>)` : ''}.</p></div>`;
+      if (!list.length) return html`<div class="ep-group">${head}<p class="empty">The blueprint has no epics yet.</p></div>`;
+      return html`<div class="ep-group">${head}<div class="ep-cols" aria-hidden="true"><span>Epic</span><span>State</span><span>Tasks</span><span class="num">Agent time</span><span class="num">Cost</span></div>${list.map(e => epicRow(b, e))}</div>`;
+    };
+    return html`<h2>Epics</h2>${sel.length ? sel.map(group) : html`<p class="empty">No blueprints are configured.</p>`}`;
+  }
+
+  function epicRow(b, e) {
+    const key = keyOf(b, e), a = obj(e.actual), est = obj(e.estimate);
+    const [cls, label, note] = stateOf(e);
+    const meta = join([arr(e.depends).length ? `Depends on ${e.depends.join(', ')}` : '', e.branch ? html`branch <code>${e.branch}</code>` : ''], ' · ');
+    const blocked = arr(e.blocked_by).length && e.state !== 'done' ? html`<span class="warnline">Waits for ${e.blocked_by.join(', ')}</span>` : '';
+    const total = num(e.tasks_total), done = num(e.tasks_done);
+    const tasks = total
+      ? html`<span class="bar" role="img" aria-label="${done} of ${total} tasks done"><i style="width:${Math.round((100 * done) / total)}%"></i></span><span class="frac">${done}/${total}</span>`
+      : html`<span class="muted">No tasks yet</span>`;
+    const estA = isNum(arr(est.agent_s)[0]) ? `est. ${range(est.agent_s, dur)}` : '';
+    const estC = isNum(arr(est.cost_usd)[0]) ? `est. ${range(est.cost_usd, money)}` : '';
+    return html`<details class="epic" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('ep', key)}">
+      <span class="c-title"><span class="eid">${e.id || '?'}</span>${e.title || ''}${meta.s ? html`<span class="meta">${meta}</span>` : ''}${blocked}</span>
+      <span class="c-state" data-label="State"><span class="badge b-${cls}" title="${label} (state: ${e.state || 'unknown'})"><i></i>${label}</span>${note ? html`<span class="meta">${note}</span>` : ''}</span>
+      <span class="c-tasks" data-label="Tasks">${tasks}</span>
+      <span class="c-num" data-label="Agent time">${num(a.agent_s) > 0 ? dur(a.agent_s) : '—'}${estA ? html`<span class="meta">${estA}</span>` : ''}</span>
+      <span class="c-num" data-label="Cost">${num(a.cost_usd) > 0 ? money(a.cost_usd, a.cost_estimated) : '—'}${estC ? html`<span class="meta">${estC}</span>` : ''}</span>
+    </summary><div class="epic-body">${epicBody(e)}</div></details>`;
+  }
+
+  function epicBody(e) {
+    const out = [], w = obj(e.elsewhere), updated = ts(w.updated);
+    if (e.elsewhere && typeof e.elsewhere === 'object') {
+      out.push(html`<p class="note">Claimed on the board by another worktree: <code>${w.worktree || '?'}</code>${w.branch ? html` on <code>${w.branch}</code>` : ''}${w.state ? ` · ${w.state}` : ''}${num(w.tasks_total) ? ` · tasks ${num(w.tasks_done)}/${w.tasks_total}` : ''}${updated ? ` · updated ${fstamp(updated)}` : ''}</p>`);
+    } else if (e.started && typeof e.started === 'object') {
+      const s = e.started, ref = ctx.multi ? e.key : e.id;
+      out.push(s.merged_into
+        ? html`<p class="note">Merged into <code>${s.merged_into}</code> but not in this checkout yet: bring it in (pull or merge).</p>`
+        : s.local
+          ? html`<p class="note">In progress on branch <code>${s.branch || '?'}</code>, not merged here. Continue it on that branch, or in its own worktree: <code>blueprint.py workspace ${ref} --create</code>.</p>`
+          : html`<p class="note">Started on another machine or by someone else: <code>${s.remote || '?'}</code>. Continue it here with <code>blueprint.py workspace ${ref} --create</code>.</p>`);
+    }
+    const repos = arr(e.repositories).filter(r => r && typeof r === 'object');
+    if (repos.length) out.push(html`<h4>Repositories</h4><div class="scroll"><table class="mini"><thead><tr><th>Repository</th><th>Order</th><th>Branch ← base</th><th>Tasks</th><th>Last gate</th><th>Git</th></tr></thead><tbody>${repos.map(repoRow)}</tbody></table></div>`);
+    out.push(storiesBlock(e));
+    const missing = arr(e.review_missing);
+    if (missing.length) out.push(html`<p class="warnline">Review has no evidence for ${missing.join(', ')}</p>`);
+    out.push(detailsLine(e));
+    return out;
+  }
+
+  function repoRow(r) {
+    const g = r.gate && typeof r.gate === 'object' ? r.gate : null, at = g && ts(g.at);
+    const gate = g
+      ? html`<span class="${g.ok ? 'ok' : 'bad'}" title="${g.command || ''}">${g.ok ? '✓ passed' : `✗ failed${isNum(g.exit) ? ` (exit ${g.exit})` : ''}`}</span>${at ? ` · ${fstamp(at)}` : ''}${isNum(g.duration_s) ? ` · ${dur(g.duration_s)}` : ''}`
+      : html`<span class="muted">not run</span>`;
+    const git = [];
+    if (r.exists === false) git.push('checkout missing');
+    if (r.merged === true) git.push(num(r.ahead) === 0 && !num(r.tasks_done) ? 'no commits yet' : 'merged');
+    if (num(r.ahead) > 0) git.push(`${r.ahead} ahead`);
+    if (num(r.behind) > 0) git.push(`${r.behind} behind`);
+    if (num(r.dirty) > 0) git.push(`${r.dirty} uncommitted`);
+    else if (r.dirty === 0) git.push('clean');
+    if (r.current_branch && r.branch && r.current_branch !== r.branch) git.push(`checked out: ${r.current_branch}`);
+    return html`<tr><td><strong>${r.name || '?'}</strong>${r.role ? html`<span class="meta">${r.role}</span>` : ''}</td><td>${isNum(r.order) ? r.order : '—'}</td>
+      <td>${r.branch ? html`<code>${r.branch}</code>` : '—'}${r.base ? html` ← <code>${r.base}</code>` : ''}</td><td>${num(r.tasks_total) ? `${num(r.tasks_done)}/${r.tasks_total}` : '—'}</td>
+      <td>${gate}</td><td>${git.length ? git.join(' · ') : '—'}</td></tr>`;
+  }
+
+  function firstOpen(tasks) { // the open task with the lowest number is the next one
+    const n = t => { const m = /\d+/.exec(String(t.id || '')); return m ? +m[0] : Infinity; };
+    return tasks.reduce((best, t) => (t && typeof t === 'object' && !t.done && (!best || n(t) < n(best)) ? t : best), null);
+  }
+
+  function taskList(tasks, next) {
+    tasks = tasks.filter(t => t && typeof t === 'object');
+    if (!tasks.length) return '';
+    return html`<ul class="tasks">${tasks.map(t => {
+      const at = ts(t.ticked_at), isNext = t === next;
+      const when = t.done ? (at ? `ticked ${fstamp(at)}` : 'done') : isNext ? 'next' : 'open';
+      return html`<li class="${t.done ? 'done' : isNext ? 'next' : ''}"><span class="cb${t.done ? ' on' : ''}" aria-hidden="true"></span><code class="tid">${t.id || '?'}</code>${t.repository ? html`<span class="chip">${t.repository}</span>` : ''}${t.seed ? html`<span class="seed">${t.seed}</span>` : ''}<span class="ttl">${t.title || ''}</span><span class="when">${when}</span></li>`;
+    })}</ul>`;
+  }
+
+  function storiesBlock(e) {
+    const stories = arr(e.stories).filter(s => s && typeof s === 'object'), other = arr(e.other_tasks);
+    if (!stories.length && !other.length) return '';
+    const next = e.state === 'done' ? null : firstOpen(stories.flatMap(s => arr(s.tasks)).concat(other));
+    const story = s => {
+      const st = String(s.state || 'open');
+      const meta = join([isNum(s.acs) ? plural(s.acs, 'AC') : '', num(s.total) ? `${num(s.done)}/${s.total} tasks` : 'no tasks yet', num(s.active_s) > 0 ? `${dur(s.active_s)} active` : ''], ' · ');
+      return html`<div class="story"><div class="story-h"><span class="sid">${s.id || ''}</span><span>${s.title || ''}</span><span class="sst s-${st}">${st.replace('-', ' ')}</span><span class="meta">${meta}</span></div>${taskList(arr(s.tasks), next)}</div>`;
+    };
+    return html`<h4>Stories</h4>${stories.map(story)}${other.length ? html`<div class="story"><div class="story-h"><span>Tasks outside stories</span></div>${taskList(other, next)}</div>` : ''}`;
+  }
+
+  function shares(o) { // "opus 80%, sonnet 20%", or the one name
+    const list = Object.entries(obj(o)).filter(([, v]) => num(v) > 0).sort((x, y) => y[1] - x[1]);
+    const total = sum(list, x => x[1]);
+    return list.length === 1 ? list[0][0] : list.map(([k, v]) => `${k} ${Math.round((100 * v) / total)}%`).join(', ');
+  }
+
+  function detailsLine(e) {
+    const a = obj(e.actual);
+    if (!num(a.sessions) && !num(a.agent_s)) return html`<p class="meta">No recorded sessions for this epic yet.</p>`;
+    const byDesc = (x, y) => num(y[1]) - num(x[1]);
+    const subs = Object.entries(obj(a.subagents)).map(([k, v]) => `${k} ×${num(obj(v).runs)}${Object.keys(obj(obj(v).efforts)).length ? ` (effort ${shares(obj(v).efforts)})` : ''}`);
+    const repoTime = Object.entries(obj(a.repos)).map(([k, v]) => [k, num(obj(v).tool_s), num(obj(v).calls)]).sort(byDesc).map(([k, s, n]) => `${k} ${dur(s)} (${plural(n, 'call')})`);
+    const items = [['Model time', dur(a.model_s)], ['Tool time', dur(a.tool_s)], ['Waited for you', dur(a.wait_s)],
+      ['Human gates', isNum(a.gates) ? a.gates : ''], ['Sessions', isNum(a.sessions) ? a.sessions : ''], ['Calendar', isNum(a.calendar_s) ? cal(a.calendar_s) : ''],
+      ['Tokens', isNum(a.tokens) ? tok(a.tokens) : ''], ['Phases', Object.entries(obj(a.phases)).sort(byDesc).map(([k, v]) => `${k} ${dur(num(v))}`).join(', ')],
+      ['Models', shares(a.models)], ['Effort', shares(a.efforts)], ['Subagents', subs.join(', ')], ['Tool time by repository', repoTime.join(', ')]];
+    return html`<dl class="details">${items.filter(([, v]) => v !== '').map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`;
+  }
+
+  // ---------- charts (inline SVG) ----------
+  function chartWidth() { // the inner width of a card, measured from the KPI row (always rendered first)
+    const k = document.getElementById('kpis');
+    const w = k && k.clientWidth ? k.clientWidth - 34 : 0;
+    return Math.max(420, Math.round(w || 900));
+  }
+  const tableView = (key, head, rows) => html`<details class="tv" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('tv', key)}">Show as a table</summary><div class="scroll"><table><thead><tr>${head.map(h => html`<th>${h}</th>`)}</tr></thead><tbody>${rows.map(r => html`<tr>${r.map(c => html`<td>${c}</td>`)}</tr>`)}</tbody></table></div></details>`;
+
+  function spansOf(e) { // worked stretches as [start, end] in ms, merged
+    const a = obj(e.actual);
+    let sp = arr(a.spans).map(p => [ts(arr(p)[0]), ts(arr(p)[1])]).filter(p => isNum(p[0]) && isNum(p[1]));
+    if (!sp.length && isNum(ts(a.first)) && isNum(ts(a.last))) sp = [[ts(a.first), ts(a.last)]];
+    const out = [];
+    for (const [s, x] of sp.sort((p, q) => p[0] - q[0])) {
+      const last = out[out.length - 1];
+      if (last && s <= last[1]) last[1] = Math.max(last[1], x); else out.push([s, Math.max(s, x)]);
+    }
+    return out;
+  }
+
+  // Remaining epics on `parallelism` slots in blueprint order, after their dependencies (as estimate.py
+  // schedules them); P50 and P90 are scheduled separately. Length = estimated calendar time minus spent.
+  function forecast(b, now) {
+    const k = Math.max(1, Math.round(num(obj(b.remaining).parallelism)) || 1), out = {};
+    [0, 1].forEach(q => {
+      const slots = new Array(k).fill(now), fin = {};
+      for (const e of epicsOf(b)) {
+        const est = obj(e.estimate), c = arr(est.calendar_s)[q];
+        if (e.state === 'done' || !isNum(c)) continue;
+        const len = Math.max(0, c - num(obj(est.spent).calendar_s)) * 1000;
+        const ready = Math.max(now, ...arr(e.depends).map(d => fin[d] || now));
+        const i = slots.indexOf(Math.min(...slots)), start = Math.max(ready, slots[i]);
+        fin[e.id] = slots[i] = start + len;
+        out[e.id] = Object.assign(out[e.id] || {}, q ? { s90: start, e90: start + len } : { s50: start, e50: start + len });
+      }
+    });
+    for (const id of Object.keys(out)) if (!isNum(out[id].e50) || !isNum(out[id].e90)) delete out[id];
+    return out;
+  }
+
+  function ticks(lo, hi, max) {
+    const M = 60e3, H = 60 * M, D = 24 * H;
+    const step = [5 * M, 10 * M, 15 * M, 30 * M, H, 2 * H, 3 * H, 6 * H, 12 * H, D, 2 * D, 7 * D, 14 * D].find(s => (hi - lo) / s <= max) || 30 * D;
+    const out = [], d0 = new Date(lo);
+    if (step < D) {
+      let t = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()).getTime();
+      while (t < lo) t += step;
+      for (; t <= hi; t += step) out.push(t);
+    } else {
+      const c = step < 30 * D ? new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()) : new Date(d0.getFullYear(), d0.getMonth(), 1);
+      const advance = () => (step < 30 * D ? c.setDate(c.getDate() + step / D) : c.setMonth(c.getMonth() + 1));
+      if (c.getTime() < lo) advance();
+      for (; c.getTime() <= hi && out.length < 400; advance()) out.push(c.getTime());
+    }
+    const every = Math.max(1, Math.ceil(out.length / max));
+    return { step, list: out.filter((_, i) => i % every === 0) };
+  }
+
+  function timeline(st) {
+    const sel = selected(st).filter(b => epicsOf(b).length), now = Math.floor(ctx.now / 60000) * 60000, rows = [];
+    for (const b of sel) {
+      const plan = forecast(b, now);
+      if (sel.length > 1) rows.push({ group: bpName(b) });
+      for (const e of epicsOf(b)) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null });
+    }
+    let lo = Infinity, hi = -Infinity;
+    for (const r of rows) {
+      for (const [s, x] of r.spans || []) { lo = Math.min(lo, s); hi = Math.max(hi, x); }
+      if (r.f) { lo = Math.min(lo, r.f.s50); hi = Math.max(hi, r.f.e90, r.f.e50); }
+    }
+    if (!isFinite(lo)) return html`<h2>Timeline</h2><p class="empty">No recorded activity or forecast yet.</p>`;
+    lo = Math.min(lo, now); hi = Math.max(hi, now);
+    const padT = Math.max((hi - lo) * 0.02, 5 * 60e3); lo -= padT; hi += padT;
+    const W = chartWidth(), L = Math.min(210, Math.round(W * 0.3)), R = 12, top = 22, rowH = 26, H = top + rows.length * rowH + 24;
+    const x = t => L + ((t - lo) / (hi - lo)) * (W - L - R), f1 = n => n.toFixed(1);
+    const tk = ticks(lo, hi, Math.max(2, Math.floor((W - L - R) / 96)));
+    let dated = false; // the first label shown carries the date; later ones only at midnight
+    const grid = tk.list.map(t => {
+      const xx = x(t), d = new Date(t), day = tk.step >= 864e5 || (d.getHours() === 0 && d.getMinutes() === 0);
+      const lab = day ? fdate(t) : dated ? ftime(t) : `${fdate(t)} ${ftime(t)}`, w = lab.length * 6.4;
+      const fits = xx - w / 2 >= L - 8 && xx + w / 2 <= W;
+      if (fits && lab !== ftime(t)) dated = true;
+      return html`<line class="grid" x1="${f1(xx)}" x2="${f1(xx)}" y1="${top - 4}" y2="${H - 24}"/>${fits ? html`<text class="axis" x="${f1(xx)}" y="${H - 8}" text-anchor="middle">${lab}</text>` : ''}`;
+    });
+    const table = [];
+    const body = rows.map((r, i) => {
+      const y = top + i * rowH;
+      if (r.group) return html`<text class="grp" x="0" y="${y + 17}">${clip(r.group, Math.floor((L - 8) / 7))}</text>`;
+      const name = `${r.e.id || '?'} ${r.e.title || ''}`.trim(), marks = [], px = [];
+      for (const [s, t] of r.spans) { // merge stretches closer than a pixel apart
+        const a = x(s), b2 = Math.max(x(t), a + 2), last = px[px.length - 1];
+        if (last && a - last[1] < 1.5) last[1] = Math.max(last[1], b2); else px.push([a, b2]);
+      }
+      px.forEach(([a, b2]) => marks.push(html`<rect class="act" x="${f1(a)}" y="${y + 7}" width="${f1(b2 - a)}" height="12" rx="2"/>`));
+      const tip = [name];
+      const worked = r.spans.length ? `${fstamp(r.spans[0][0])} – ${fstamp(r.spans[r.spans.length - 1][1])}` : '';
+      if (worked) tip.push(`Worked ${worked} (${plural(r.spans.length, 'stretch', 'stretches')} of activity)`);
+      if (r.f) {
+        const a = x(r.f.s50), m = Math.max(x(r.f.e50), a + 2), z = Math.max(x(r.f.e90), m);
+        if (z > m + 0.5) marks.push(html`<rect class="fc90" x="${f1(m)}" y="${y + 7}" width="${f1(z - m)}" height="12" rx="2"/>`);
+        marks.push(html`<rect class="fc" x="${f1(a)}" y="${y + 7}" width="${f1(m - a)}" height="12" rx="2"/>`);
+        tip.push(`Forecast: starts ${fstamp(r.f.s50)}, done ${fstamp(r.f.e50)} (P50) – ${fstamp(r.f.e90)} (P90)`);
+      } else if (r.e.state === 'done') tip.push('Done');
+      else tip.push('No forecast yet');
+      table.push([name, worked || '—', r.f ? fstamp(r.f.e50) : r.e.state === 'done' ? 'done' : '—', r.f ? fstamp(r.f.e90) : '—']);
+      const t = tip.join('\n');
+      return html`<g class="row" tabindex="0" id="${domId('tl', keyOf(r.b, r.e))}" data-tip="${t}" aria-label="${t}"><rect class="hit" x="0" y="${y}" width="${W}" height="${rowH}"/><text class="lbl" x="0" y="${y + 17}">${clip(name, Math.floor((L - 10) / 6.6))}</text>${marks}</g>`;
+    });
+    const nx = f1(x(now));
+    return html`<h2>Timeline</h2><div class="legend"><span><i class="sw act"></i>Worked</span><span><i class="sw fc"></i>Forecast (P50)</span><span><i class="sw fc90"></i>Up to P90</span><span><i class="sw line"></i>Now</span></div>
+      <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Timeline of epics: worked time and forecast">${grid}${body}
+      <line class="now" x1="${nx}" x2="${nx}" y1="${top - 6}" y2="${H - 24}"/><text class="axis" x="${nx}" y="${top - 10}" text-anchor="middle">now</text></svg>
+      ${tableView('tv:timeline', ['Epic', 'Worked', 'Forecast done (P50)', 'Forecast done (P90)'], table)}`;
+  }
+
+  function barPath(x, y, w, h, r) { // square at the baseline, rounded data end
+    const f = n => n.toFixed(1);
+    r = Math.max(0, Math.min(r, w, h / 2));
+    return r ? `M${f(x)},${y}h${f(w - r)}a${r},${r} 0 0 1 ${r},${r}v${h - 2 * r}a${r},${r} 0 0 1 ${-r},${r}h${f(r - w)}z` : `M${f(x)},${y}h${f(w)}v${h}h${f(-w)}z`;
+  }
+
+  function breakdown(st) {
+    const NAMES = ['Model', 'Tools and tests', 'Waiting for you'], items = [];
+    for (const b of selected(st)) for (const e of epicsOf(b)) {
+      const a = obj(e.actual), v = [num(a.model_s), num(a.tool_s), num(a.wait_s)];
+      const name = `${ctx.multi ? `${b.id}:` : ''}${e.id || '?'} ${e.title || ''}`.trim();
+      if (v[0] + v[1] + v[2] > 0) items.push({ b, e, v, name, total: v[0] + v[1] + v[2] });
+    }
+    if (!items.length) return html`<h2>Where the time went</h2><p class="empty">No recorded time yet.</p>`;
+    const W = chartWidth(), L = Math.min(210, Math.round(W * 0.3)), R = 70, rowH = 30, barH = 16, H = items.length * rowH;
+    const max = Math.max(...items.map(i => i.total)), sx = v => (v / max) * (W - L - R);
+    const rows = items.map((it, i) => {
+      const y = i * rowH + (rowH - barH) / 2, last = it.v.map((v, k) => (v > 0 ? k : -1)).filter(k => k >= 0).pop();
+      const name = it.name, segs = [];
+      let x0 = L;
+      it.v.forEach((v, k) => {
+        if (v <= 0) return;
+        const w = sx(v), vis = Math.max(1, w - (k === last ? 0 : 2)), text = dur(v);
+        segs.push(html`<path class="m${k + 1}" d="${barPath(x0, y, vis, barH, k === last ? 4 : 0)}"/>`);
+        if (text.length * 6.6 + 10 <= vis) segs.push(html`<text class="in" x="${(x0 + 5).toFixed(1)}" y="${y + barH - 4}">${text}</text>`);
+        x0 += w;
+      });
+      const tip = [name, ...NAMES.map((n, k) => `${n}: ${dur(it.v[k])} (${Math.round((100 * it.v[k]) / it.total)}%)`), `Total: ${dur(it.total)}`].join('\n');
+      return html`<g class="row" tabindex="0" id="${domId('tb', keyOf(it.b, it.e))}" data-tip="${tip}" aria-label="${tip}"><rect class="hit" x="0" y="${i * rowH}" width="${W}" height="${rowH}"/><text class="lbl" x="0" y="${y + barH - 4}">${clip(name, Math.floor((L - 10) / 6.6))}</text>${segs}<text class="axis" x="${(x0 + 6).toFixed(1)}" y="${y + barH - 4}">${dur(it.total)}</text></g>`;
+    });
+    return html`<h2>Where the time went</h2><div class="legend">${NAMES.map((n, k) => html`<span><i class="sw m${k + 1}"></i>${n}</span>`)}</div>
+      <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Where each epic's time went">${rows}</svg>
+      ${tableView('tv:breakdown', ['Epic', ...NAMES, 'Total'], items.map(it => [it.name, ...it.v.map(v => dur(v)), dur(it.total)]))}`;
+  }
+
+  // ---------- repositories, discovery, footer ----------
+  function repos(st) {
+    const list = arr(st.repositories).filter(r => r && typeof r === 'object');
+    if (!list.length) return '';
+    const row = r => {
+      const eps = arr(r.epics_in_progress);
+      const chips = eps.map(k => { const hit = ctx.index.get(k); return html`<span class="chip${inBp(k) ? '' : ' dim'}">${epicRef(k)}${hit && hit.e.title ? ` ${hit.e.title}` : ''}</span>`; });
+      return html`<tr><td><strong>${r.name || '?'}</strong>${r.hub ? html` <span class="chip">hub</span>` : ''}</td><td class="path">${r.path || '—'}</td>
+        <td class="gate">${r.gate ? html`<code>${r.gate}</code>` : html`<span class="muted">none</span>`}</td>
+        <td>${chips.length ? chips : html`<span class="muted">none</span>`}${eps.length > 1 ? html`<span class="warnline">${eps.length} epics change it in parallel</span>` : ''}</td></tr>`;
+    };
+    return html`<h2>Repositories</h2><div class="scroll"><table><thead><tr><th>Repository</th><th>Path</th><th>Gate</th><th>Epics in progress</th></tr></thead><tbody>${list.map(row)}</tbody></table></div>`;
+  }
+
+  function discovery(st) {
+    const rows = [];
+    for (const b of selected(st)) for (const [kind, d] of Object.entries(obj(b.discovery))) rows.push({ b, kind, d: obj(d) });
+    if (!rows.length) return '';
+    const kindName = k => (k === 'discover' ? 'Discovery' : k === 'amend' ? 'Amendments' : k);
+    return html`<h2>Discovery and amendments</h2><div class="scroll"><table><thead><tr>${ctx.multi ? html`<th>Blueprint</th>` : ''}<th>Work</th><th class="num">Agent time</th><th class="num">Waited for you</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
+      <tbody>${rows.map(r => html`<tr>${ctx.multi ? html`<td>${bpName(r.b)}</td>` : ''}<td>${kindName(r.kind)}</td><td class="num">${dur(r.d.agent_s)}</td><td class="num">${dur(r.d.wait_s)}</td><td class="num">${isNum(r.d.sessions) ? r.d.sessions : '—'}</td><td class="num">${tok(r.d.tokens)}</td><td class="num">${money(r.d.cost_usd)}</td></tr>`)}</tbody></table></div>`;
+  }
+
+  function footer(st) {
+    const g = ts(st.generated);
+    return html`State generated ${g ? `${fdate(g)} ${ftime(g)}` : '—'} · metrics: ${st.metrics || 'local'}${SNAPSHOT ? '' : ' · refreshes every 3 s'} · speckit-blueprint`;
+  }
+
+  // ---------- rendering: a section's DOM is replaced only when its markup changed ----------
+  function put(id, content) {
+    const el = document.getElementById(id), s = part(content);
+    if (!el || el._html === s) return;
+    el._html = s;
+    el.innerHTML = s;
+    if (el.tagName === 'SECTION') el.hidden = !s;
+  }
+
+  function render() {
+    const st = ui.state, y = window.scrollY, active = document.activeElement, focusId = active && active.id;
+    if (st) prepare(st);
+    put('banners', banners(st));
+    if (st) {
+      document.title = `${st.project || 'Project'} · blueprint dashboard`;
+      put('hdr', header(st));
+      put('kpis', kpis(st));
+      put('sessions', sessions(st));
+      put('epics', epicsSection(st));
+      put('timeline', timeline(st));
+      put('breakdown', breakdown(st));
+      put('repos', repos(st));
+      put('discovery', discovery(st));
+      put('foot', footer(st));
+    }
+    if (focusId && document.activeElement !== active) { const el = document.getElementById(focusId); if (el && el.focus) el.focus({ preventScroll: true }); }
+    if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+    tickLive();
+  }
+
+  function safeRender() {
+    const fatal = document.getElementById('fatal');
+    try { render(); fatal.hidden = true; } catch (err) {
+      console.error(err);
+      fatal.textContent = `The page could not show this state: ${err && err.message ? err.message : err}`;
+      fatal.hidden = false;
+    }
+  }
+
+  function tickLive() {
+    const el = document.getElementById('live');
+    if (!el) return;
+    let cls = 'live', text;
+    if (SNAPSHOT) { const g = ui.state && ts(ui.state.generated); cls += ' snap'; text = `Snapshot · ${g ? `${fdate(g)} ${ftime(g)}` : 'time unknown'}`; }
+    else if (!ui.lastOk) { cls += ui.error ? ' bad' : ''; text = ui.error ? 'Not connected' : 'Connecting…'; }
+    else {
+      const age = (Date.now() - ui.lastOk) / 1000;
+      if (age * 1000 > STALE_MS) { cls += ' stale'; text = `No update for ${dur(age)} — is blueprint.py dashboard still running?`; }
+      else { cls += ' ok'; text = `Live · updated ${age < 1 ? 'just now' : `${dur(age)} ago`}`; }
+    }
+    if (el.className !== cls) el.className = cls;
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch('/api/state', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data && typeof data === 'object' && !Array.isArray(data) && !data.error) { ui.state = data; ui.error = null; ui.lastOk = Date.now(); }
+      else ui.error = data && data.error ? String(data.error) : 'The server sent an unexpected answer.';
+    } catch (err) {
+      ui.error = `Cannot reach /api/state (${err && err.message ? err.message : err}).`;
+    }
+    safeRender();
+    setTimeout(poll, POLL_MS);
+  }
+
+  // ---------- events ----------
+  document.addEventListener('change', ev => {
+    if (!ev.target || ev.target.id !== 'bp') return;
+    ui.bp = ev.target.value || 'all';
+    try { history.replaceState(null, '', ui.bp === 'all' ? location.pathname + location.search : `#bp=${encodeURIComponent(ui.bp)}`); } catch (_) { /* file: URLs may refuse */ }
+    safeRender();
+  });
+  document.addEventListener('toggle', ev => { // remember which epics (and table views) are expanded
+    const d = ev.target;
+    if (!d || d.tagName !== 'DETAILS' || !d.dataset || !d.dataset.key) return;
+    if (d.open) ui.open.add(d.dataset.key); else ui.open.delete(d.dataset.key);
+  }, true);
+
+  const tip = document.getElementById('tip');
+  const hideTip = () => { tip.hidden = true; };
+  function showTip(target, x, y) {
+    const text = target.getAttribute('data-tip');
+    if (!text) return hideTip();
+    if (tip.textContent !== text) tip.textContent = text;
+    tip.hidden = false;
+    tip.style.left = `${Math.max(8, Math.min(x + 14, window.innerWidth - tip.offsetWidth - 8))}px`;
+    tip.style.top = `${y + 18 + tip.offsetHeight > window.innerHeight ? y - tip.offsetHeight - 10 : y + 18}px`;
+  }
+  const tipTarget = ev => (ev.target && ev.target.closest ? ev.target.closest('[data-tip]') : null);
+  document.addEventListener('pointermove', ev => { const t = tipTarget(ev); if (t) showTip(t, ev.clientX, ev.clientY); else hideTip(); });
+  document.addEventListener('focusin', ev => { const t = tipTarget(ev); if (!t) return hideTip(); const r = t.getBoundingClientRect(); showTip(t, r.left + Math.min(r.width / 2, 260), r.top + 8); });
+  document.addEventListener('focusout', hideTip);
+  window.addEventListener('scroll', hideTip, { passive: true });
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(safeRender, 150); });
+
+  // ---------- start ----------
+  if (SNAPSHOT) {
+    const s = window.__STATE__;
+    if (s && typeof s === 'object' && !s.error) ui.state = s;
+    else ui.error = s && s.error ? String(s.error) : 'The exported file holds no state.';
+    safeRender();
+  } else {
+    safeRender();
+    poll();
+    setInterval(tickLive, 1000);
+  }
+})();
+</script>
+</body>
+</html>

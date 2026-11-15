@@ -6,110 +6,254 @@ traded off against each other:
 - **Deep product discovery** from [idea-to-blueprint](https://github.com/iniesohidham/idea-to-blueprint):
   intake, web research, competitor benchmarking, ranked architecture drivers, a verified and pinned stack,
   the quality gate, personas, flows, screens, UX copy, edge cases, and epics → stories → Given/When/Then
-  acceptance criteria → tests. The result is one evidence-backed `docs/BLUEPRINT.md`.
+  acceptance criteria → tests. The result is one evidence-backed blueprint per product.
 - **Token-efficient, drift-free implementation** from Spec Kit: each epic is built from a small feature
   folder (`spec.md`, `plan.md`, `tasks.md`, …) instead of a 100-page document.
 
 The bridge is a deterministic compiler. `/speckit-blueprint-compile E03` resolves every ID the epic uses
 (personas, flows, screens, copy lines, entities, endpoints, integrations, edge cases, decisions, risks,
-open questions, sources) to its definition in the blueprint and writes a spec-kit feature folder with
-exactly that. Build sessions never search the blueprint.
+open questions, sources) to its definition and writes a Spec Kit feature folder with exactly that. Around
+it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
+pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.4.0, Claude Code only.** Tested against Spec Kit 1.2.4.
+Status: **0.5.0, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
-A one-paragraph idea in Persian (a personal expense tracker in tomans with Jalali-month reports) was taken
-from nothing to a finished v1 with this extension and Claude Code (Sonnet), every session started with
+With 0.2, a one-paragraph idea in Persian (a personal expense tracker in tomans with Jalali-month
+reports) was taken from nothing to a finished v1 with Claude Code (Sonnet), every session started with
 "continue" in a fresh session:
 
 | Stage | Outcome |
 |---|---|
 | Discover | 7 intake questions with defaults, web research with pinned versions, decision brief, a 133 KB blueprint (4 epics, 12 stories) that lints clean with every ID resolvable |
 | Bootstrap | Constitution, review checklist, decisions log, CLAUDE.md block |
-| 4 epics × (plan session + build session) | 130/130 tasks ticked one by one, every epic reviewed `Status: DONE`, 217 tests green at 97.8% coverage |
-| Human gates | One manual terminal check (RTL column alignment) stopped the flow until the user confirmed; no commit or push without approval |
+| 4 epics × (plan session + build session) | 130/130 tasks ticked, every epic reviewed `Status: DONE`, 217 tests green at 97.8% coverage |
+| Human gates | One manual terminal check stopped the flow until the user confirmed; no commit or push without approval |
 
-The whole run used about $13 of Sonnet usage at API prices, discovery included, as Claude Code reports it
-(`total_cost_usd`). On a Claude subscription this counts against the plan's usage limits, not a separate bill.
+The whole run used about $13 of Sonnet usage at API prices, discovery included.
 
-Version 0.3.0 was run end to end twice more, every step a fresh headless Claude Code session (Sonnet):
-
-| Scenario | Outcome |
-|---|---|
-| Idea → blueprint → E00, E01 built → a feature idea on the same blueprint (amendment A-01, new E02) → built | 3/3 epics reviewed `Status: DONE`; the change under the finished E01 was reported and decided by the user, not recompiled silently |
-| A tip calculator built with plain Spec Kit (own constitution, 29 tasks) → extension installed → history feature through it | Constitution principles untouched (managed block added); brownfield discover cited the repository and planned a Baseline E00; 3/3 epics `DONE`, 69 tests green; the hand-written feature untouched by the hooks |
-
-| A planning repository with a five-principle constitution and two code repositories (provider `core`, consumer `cli`), a finished multi-repo feature, then a cross-repo feature through the extension | Every task carried `[core]`/`[cli]`; the core epic came before the cli epic; analyze caught a task touching two repositories; a contradiction between an AC and a decision went through amendment A-01 to the backward-compatible option the constitution required; specs only in the planning repository; 3/3 epics `DONE`, both gates green |
-
-Every human gate held: manual checks waited for a person, amendments waited for approval, and no
-session committed.
+With 0.3, two more runs, every step a fresh headless session: an amendment under a finished epic
+(reported and decided by the user, not recompiled silently), and a project built with plain Spec Kit
+that adopted the extension (its constitution and hand-written feature untouched). A planning repository
+with two code repositories (provider `core`, consumer `cli`) built a cross-repository feature with every
+task naming its repository and the provider changed first. Since 0.4 the extension runs a real
+three-product, nine-repository project.
 
 ## Why
 
 In blueprint-driven builds, most of a session's cost is re-reading context: every model call re-reads
-everything already loaded. A session that opens a 100-page blueprint and greps it for the sections its epic
-needs pays for those sections on every call that follows. On the example blueprint shipped with
+everything already loaded. A session that opens a 100-page blueprint and greps it for the sections its
+epic needs pays for those sections on every call that follows. On the example blueprint shipped with
 idea-to-blueprint (581 KB, 9 epics), compiled feature folders are 63–127 KB each, and the compile itself
-costs no model tokens.
+costs no model tokens. The extension keeps that rule everywhere: whatever a script can decide (the next
+step, paths, branches, readiness, gates, metrics) is decided by the script, not by the model reading prose.
 
 ## Install
 
-Requires Python 3.9+ and Spec Kit 1.2+.
+Requires Python 3.9+, Spec Kit 1.2+ and git.
 
 ```bash
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.4.0.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.0.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
 clone with `specify extension add --dev /path/to/speckit-blueprint`.
 
-Installing registers the commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
-around `/speckit-implement`, and two Claude Code hooks in `.claude/settings.json` (session-start status and
-a guard against hand-editing compiled files).
+Installing registers seven commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
+around `/speckit-implement`, and three Claude Code hooks in `.claude/settings.json` (session start, tool
+use, stop) behind one internal handler.
+
+## How you use it
+
+You mostly talk in plain language; the `speckit-blueprint-flow` skill reads the project state
+(`blueprint.py status`) and runs the right step.
+
+```
+"I want an app that …"          → /speckit-blueprint-discover   intake → research → decision brief → blueprint
+                                  blueprint.py bootstrap         constitution rules, checklist, decisions log, CLAUDE.md
+"continue"  (per epic)          → /speckit-blueprint-compile E03
+                                  /speckit-tasks → /speckit-analyze
+"continue"  (fresh session)     → /speckit-implement
+                                     before: /speckit-blueprint-context  spec.md, rules, preconditions
+                                     after:  /speckit-blueprint-review   independent review, review.md handoff
+"clients should also get SMS"   → /speckit-blueprint-amend       edit the blueprint in place, recompile affected epics
+"build E04 next to E03"         → blueprint.py workspace E04 --create
+"I'm on a new machine"          → blueprint.py workspace setup, then workspace E03 --create
+"where are we?"                 → a table per blueprint; or blueprint.py dashboard
+```
+
+Every new session starts with a short status block, so "continue" is enough. You still approve the
+decision brief, product-changing amendments, migrations, and every commit and push.
+
+| Command | Role |
+|---|---|
+| `speckit-blueprint-flow` | The natural-language entry; routes by the project's state |
+| `speckit-blueprint-discover` | Idea → blueprint, at a guaranteed effort |
+| `speckit-blueprint-amend` | Deliberate change to a blueprint, at a guaranteed effort |
+| `speckit-blueprint-compile` | One epic → feature folder |
+| `speckit-blueprint-context` | `before_implement` hook |
+| `speckit-blueprint-review` | `after_implement` hook: an independent review at a guaranteed effort |
+| `speckit-blueprint-hook` | Internal: Claude Code events |
+
+## One model for one to many repositories
+
+A **hub** is the repository where Spec Kit and this extension are installed: it holds the blueprints,
+specs, constitution and the list of repositories. Code repositories stay ordinary repositories; nothing of
+the extension is installed in them. A single-repository project is a hub whose only repository is itself;
+a monorepo lists its folders as repositories.
+
+```yaml
+# .specify/extensions/blueprint/blueprint-config.yml
+repositories:
+  wiki: {path: ., branch_prefix: docs/}
+  desk: {path: ../desk, remote: ../desk.git, gate: make check, base: main, branch_prefix: feat/}
+  id:   {path: ../id, remote: git@github.com:acme/id.git, gate: make lint test}
+```
+
+`path` defaults to `../<name>`. `remote` is where `workspace setup` clones the repository from: a URL, or
+one relative to the hub's own (`../desk.git`, as git's submodules allow), so the same config serves SSH
+and HTTPS clones.
+
+Each epic says which repositories it changes, in order (providers before consumers):
+
+```
+**Repositories**
+
+| Repository | Order | Role | Base | Branch | Contracts |
+|---|---|---|---|---|---|
+| `id` | 1 | Provides the session API | | | provides API-21 |
+| `desk` | 2 | Consumes it | | | consumes API-21 |
+```
+
+- Compile checks the names, gives each repository its branch (`<branch_prefix><feature folder>`, Spec
+  Kit's convention; a Branch cell wins) and base, and writes spec.md "Target Repositories" and plan.md
+  "Repositories". Every task starts with its repository in brackets and gives paths relative to it.
+- `blueprint.py repos E03` shows each repository's branch, uncommitted files, ahead/behind and merged
+  state; `blueprint.py gate E03` runs every repository's gate and records the result.
+- Sessions start in the hub, even for an epic that changes one repository: the specs, hooks and metrics
+  are there. Merge the repositories in the table's order and the hub's branch last, so a DONE visible in
+  the hub means the code is merged everywhere.
+- Work that belongs to no blueprint stays each repository's own business.
+
+## Parallel epics
+
+- `**Depends on** E00, E02` is read: an epic is `blocked` until its dependencies are DONE in the checkout.
+- `blueprint.py workspace E04 --create` makes the epic's worktrees, in the hub and in every repository it
+  changes, all on its branch, and prints how to open a session there (`claude --add-dir …`).
+- A board in the hub's git directory (shared by every worktree, never committed) records which worktree
+  builds which epic. Status shows them as `elsewhere` and moves on to the next ready epic; compile
+  refuses an epic another worktree holds (`--take` moves it); the hook refuses a compile that would switch
+  the active feature under another live session in the same worktree.
+- Decisions and amendments made while building are numbered within the epic (`DR-E03-1`, `A-E03-1`), so
+  parallel branches never take the same number.
+
+## A new machine, or one repository on its own
+
+A code repository on its own holds code only; features are built from the hub, and getting it is one
+clone:
+
+1. Clone the hub next to the repository you have (`git clone <hub url> ../wiki`). Paths default to
+   `../<name>`, so the hub finds that repository without a setting.
+2. `blueprint.py workspace setup` clones every repository missing on this machine from its `remote` and
+   fetches the others; `workspace setup E03` limits it to one epic's repositories.
+3. `blueprint.py workspace E03 --create` continues the epic from where it was pushed: a branch a remote
+   has (the hub's, with its ticked tasks, and each repository's) is checked out and tracked, not started
+   again from the base.
+
+`status` marks an epic whose branch exists, here or on a remote, but whose folder is not in this checkout
+as `started`: in progress on that branch (beside the one you are on, on another machine, or by someone
+else). It moves on to the next ready epic instead of offering to compile that one again, and says how to
+continue it, or, when the base branch already has its folder, that a pull or merge is all it takes. The
+same holds in a single repository with a branch per feature: back on main, an epic in progress on its
+branch shows as `started`. Status also names the repositories the next epic needs that are not on this
+machine.
+
+So that a session opened in a code repository knows where to go, `blueprint.py workspace link` writes a
+short block into each code repository's `CLAUDE.md`: which hub specifies its features, how to clone it,
+and that features are built from there. It never commits; commit the file in each repository.
+
+Not supported, on purpose: building a feature without access to the hub (give read access; the hub holds
+documents), and specs kept inside the code repositories. An epic that changes two repositories would need
+its spec split or copied, and status, the board and metrics would be scattered; see
+[docs/DESIGN.md](docs/DESIGN.md).
+
+## Guaranteed effort
+
+Discovery decides the product and a review is the last line before a human reads a large diff, so they
+are worth the highest effort; implementation follows a decided spec and is where most tokens go.
+
+```yaml
+effort:          # steps that must run at a set level; everything else uses the session's level
+  discover: max
+  amend: max
+  review: max
+effort_model: inherit
+```
+
+A listed step runs its reasoning in a subagent started at that level, whatever the session's level is.
+Subagents cannot talk to the user, so discover and amend run in rounds: the subagent works up to a
+checkpoint (intake questions, the decision brief, a drafted amendment) and returns; the main session asks
+you; your answer goes back to the same subagent. The review runs in a fresh subagent that did not write
+the code. A Claude Code hook checks the agent's real level: if something lowers it (`CLAUDE_CODE_EFFORT_LEVEL`,
+an organization cap, the model), the step stops and says why, and the guard refuses to write a blueprint
+or a DONE review below the level.
+
+## Metrics, estimates and the dashboard
+
+At the end of every turn the stop hook reads the session's Claude Code transcript and records, per epic
+(and per blueprint for discovery and amendments): agent time split into model and tool time, time spent
+waiting for you and the number of human gates, tokens, cost, models, effort levels, phases, repositories,
+subagents, task ticks and time per story. It stays in the hub's git directory unless `metrics: commit`
+also writes a summary into each finished epic's folder. `blueprint.py metrics --backfill` reads the
+transcripts Claude Code still keeps.
+
+`blueprint.py estimate` turns finished epics into per-AC rates and gives every remaining epic a P50–P90
+range of agent time, cost and calendar time, and the project a finish date that follows the `Depends on`
+graph and the parallelism seen so far. Compile records the estimate before building; the review adds
+"Estimate vs actual". Three finished epics are needed before the ranges are more than low confidence.
+
+```bash
+python3 .specify/extensions/blueprint/scripts/blueprint.py dashboard            # live, on 127.0.0.1:8765
+python3 .specify/extensions/blueprint/scripts/blueprint.py dashboard --export status.html   # a snapshot to share
+```
+
+The dashboard shows totals, remaining ranges and the finish date; every live session (what it is doing,
+or how long it has waited for you); epics expandable to stories and tasks with their repositories, branches
+and gates; a timeline with forecast ranges; where each epic's time went; and which epics touch each
+repository. For Claude Code's status line, add to `.claude/settings.json`:
+
+```json
+{"statusLine": {"type": "command", "command": "python3 .specify/extensions/blueprint/scripts/blueprint.py statusline"}}
+```
 
 ## Adding it to an existing Spec Kit project
 
-The extension can join a project that already has its own constitution, features and workflow. Its job
-there is to turn a new idea into epics; everything that exists stays the project's:
+The extension can join a project that already has its own constitution, features and workflow:
 
 - **Constitution.** Bootstrap does not rewrite a constitution the project wrote. It adds one managed block
-  (`speckit-blueprint:rules`, before `## Governance`) that applies only to features compiled from the
-  blueprint and yields to the project's principles. Adding or changing the block is recorded the Spec Kit
-  way: the version goes up (minor by default; `constitution_version_bump`) and Last Amended is set. No
-  Sync Impact Report comment is left behind (Spec Kit removes it before the commit); bootstrap reports the
-  amendment instead. The guard protects only that block. Set `constitution_mode` in the config to force `own` or `append`.
-- **Existing features.** The `before_implement` and `after_implement` hooks return at once for any feature
-  folder without `.blueprint.json`, so features written by hand keep their usual flow. Compiled epics
-  continue the project's feature numbering.
-- **Project rules.** The flow skill reads the constitution's own principles, `AGENTS.md` and `CLAUDE.md`
-  first and follows them where they are stricter (for example, every change recorded as a task first).
+  per blueprint (before `## Governance`) that applies only to features compiled from that blueprint and
+  yields to the project's principles, bumps the version (`constitution_version_bump`) and sets Last
+  Amended. Set `constitution_mode` to force `own` or `append`.
+- **Existing features.** The hooks do nothing for feature folders without `.blueprint.json`. Compiled
+  epics continue the project's feature numbering.
+- **Project rules.** The commands read the constitution's own principles, `CLAUDE.md` and `AGENTS.md`
+  first and follow them where they are stricter.
 - **Existing files.** `docs/REVIEW-CHECKLIST.md` is left alone if the project has its own; `CLAUDE.md`
   only gains a managed block (or nothing, with `claude_md: false`); `docs/DECISIONS.md` is created only if
-  missing. All three paths and the blueprint's can move, for example under `specs/blueprint/`
-  (`blueprint_path`, `decisions_path`, `review_checklist_path`).
-- **Discovery.** With no blueprint and an existing product, discover runs in brownfield mode: the
-  repository is the first source, what exists is summarised rather than re-decided, and the blueprint
-  covers only the new idea.
-- **Several repositories.** When specs live in one planning repository and code in sibling ones, discover
-  reads the project's rules (task prefixes such as `[core]`, provider-first contract changes) and the
-  stories and task seeds follow them; specs stay in the planning repository. If the constitution asks
-  every spec for a "Target Repositories" section and every plan for per-repository branches and
-  contracts, each epic carries `**Target repositories**` and `**Repositories**` header fields, and compile
-  writes them into those sections. Claude Code asks before each
-  command in a sibling repository, so add them to `.claude/settings.local.json` of the planning repository
-  (`permissions.additionalDirectories`, plus `allow` rules for their read-only git commands and gates).
-  An epic's precondition is a clean tree, so commit the previous epic's work (with your approval) first.
-- **Session start.** Without a blueprint, the status hook says nothing in a project that already has
+  missing. Every path can move (`blueprint_path`, `decisions_path`, `review_checklist_path`).
+- **Discovery.** With an existing product, discover runs in brownfield mode: the repositories are the
+  first source, what exists is summarised rather than re-decided, and the blueprint covers only the new
+  idea.
+- **Session start.** Without a blueprint, the status block says nothing in a project that already has
   features or its own constitution.
 
 ## Several blueprints in one project
 
-A planning repository can hold one blueprint per product. List them under `blueprints:` in the config
-(see the end of [config-template.yml](config-template.yml)):
+A hub can hold one blueprint per product:
 
 ```yaml
 default_blueprint: one
@@ -119,101 +263,78 @@ blueprints:
   desk:
     path: docs/desk/BLUEPRINT.md
     number_base: 500
-    sources: [../evida-desk, ../desk-prototype]
+    sources: [desk]
 ```
 
-- **Everything per blueprint.** Each id has its own decisions log and review checklist (by default next to
-  its blueprint file), its own `speckit-blueprint:rules:start id=<id>` block in the constitution and
-  `speckit-blueprint:start id=<id>` block in `CLAUDE.md`. Bootstrapping one never touches another's. The
-  guard protects every block.
-- **Features know their blueprint.** `.blueprint.json` records `blueprint_id`, and compile, status,
-  stale and accept look an epic up by blueprint and epic together, so `E01` of one product never reaches
-  another's folder. New folders are named `NNN-<id>-e01-<slug>`; `number_base` gives each blueprint its
-  own number range, so blueprints compiled on parallel branches do not take the same number.
-- **Choosing a blueprint.** Every command takes `--blueprint <id>`, or a qualified argument
-  (`compile desk:E01`, `find DESK:DR-03 one:SCR-02`, `section desk:13.4`). Without one it uses the active
-  feature's blueprint, else the default. `status` reports the current blueprint in full and every
-  blueprint in `blueprints`; the session-start block names them all.
-- **IDs.** With several blueprints each has a prefix (the id in capitals unless set), used where IDs from
-  two products could meet: decisions log rows, task seeds (`DESK:E01-S02-T3`), and the notes in the
-  constitution and `CLAUDE.md` blocks.
-- **Rules per feature.** `blueprint.py rules` prints the block that governs the active feature; the
-  before-implement hook loads it and ignores other blueprints' blocks.
-- **Discovery per blueprint.** Discover decides new, incremental or brownfield for the target blueprint
-  alone; brownfield reads the blueprint's `sources` (other repositories, a prototype) as well as this one.
-- **Upgrading a single-blueprint project.** Move `blueprint_path`, `decisions_path` and
-  `review_checklist_path` into an entry under `blueprints:` and make it the default. Its existing feature
-  folders (no `blueprint_id`) and its unmarked blocks stay its own; the next bootstrap adds the id to its
-  blocks. A config without `blueprints:` works as before (folder names and markers unchanged).
+Each blueprint has its own decisions log and review checklist (next to its file by default), its own
+constitution and `CLAUDE.md` blocks, its own folder numbers (`number_base`) and an ID prefix used where
+two products' IDs meet (`DESK:DR-03`). Every command takes `--blueprint <id>` or a qualified argument
+(`compile desk:E01`, `find DESK:DR-03`) and defaults to the active feature's blueprint. An epic may depend
+on another blueprint's epic (`**Depends on** one:E18`).
 
 ### Next to the idea-to-blueprint skill
 
 The extension ships idea-to-blueprint's method unmodified, so the standalone skill is not needed in a Spec
-Kit project, but it does not have to be removed either: inside a project with the extension, the discover
-and flow skills say to use them instead, and in the end-to-end runs above (with idea-to-blueprint
-installed in `~/.claude/skills`) every session picked the extension's skills. Outside Spec Kit projects the
-standalone skill keeps working as before.
-
-## How you use it
-
-You mostly talk in plain language; the `speckit-blueprint-flow` skill reads the project state
-(`blueprint.py status`) and runs the right step.
-
-```
-"I want an app that …"          → /speckit-blueprint-discover   intake → research → decision brief → blueprint
-                                  /speckit-blueprint-lint       structure + every epic's IDs resolve
-                                  /speckit-blueprint-bootstrap  constitution, review checklist, DECISIONS, CLAUDE.md block
-"continue"  (per epic)          → /speckit-blueprint-compile E03
-                                  /speckit-tasks → /speckit-analyze
-"continue"  (fresh session)     → /speckit-implement
-                                     before: /speckit-blueprint-context  loads spec.md, re-checks preconditions
-                                     after:  /speckit-blueprint-review   gate, AC evidence, checklist, review.md handoff
-"clients should also get SMS"   → /speckit-blueprint-amend       edit blueprint in place (A-nn), recompile affected epics
-"where are we?"                 → /speckit-blueprint-status
-```
-
-Every new Claude Code session starts with a short status block (current epic, tasks done, next step), so
-"continue" is enough. You still approve the decision brief, product-changing amendments, and every commit
-and push.
+Kit project, but it does not have to be removed: inside a project with the extension, the flow and
+discover skills say to use them instead. Outside Spec Kit projects the standalone skill works as before.
 
 ## What compile produces
 
 | File | Content |
 |---|---|
-| `spec.md` | Epic context; each story as a prioritised user story with its ACs, edge cases and tests verbatim; resolved edge cases; Definition of Done as success criteria; personas, flows, screens with their copy tables, metrics; open questions with defaults |
-| `plan.md` | Goal; blueprint §12.2, §13.1, §13.3, §13.4 (configurable); the stories' tasks as "Blueprint Task Seeds" that `/speckit-tasks` keeps by ID; preconditions and `[VERIFY-AT-BUILD]` lines; risks |
+| `spec.md` | Epic context; Target Repositories; each story as a prioritised user story with its ACs, edge cases and tests verbatim; resolved edge cases; Definition of Done as success criteria; personas, flows, screens with their copy tables, metrics; open questions with defaults |
+| `plan.md` | Goal; blueprint §12.2, §13.1, §13.3, §13.4 (configurable); Repositories (order, base, branch, contracts); the stories' tasks as "Blueprint Task Seeds" that `/speckit-tasks` keeps by ID; preconditions and `[VERIFY-AT-BUILD]` lines; risks |
 | `research.md` | Decision records, architecture drivers, fitness functions and sources the epic references |
 | `data-model.md` | §12.4 conventions and the entities the epic touches |
 | `contracts/` | API rows (with §12.5 conventions) and integration cards |
 | `quickstart.md` | Epic-level tests and manual checks |
-| `.blueprint.json` | Trace: blueprint hash, a hash per resolved definition, so `stale` and `status` know when the blueprint changed under a compiled epic |
+| `.blueprint.json` | Trace: blueprint id and hash, a hash per resolved definition (staleness), dependencies, repositories with branches, ACs per story, the estimate made before building |
 
-The constitution (`.specify/memory/constitution.md`) is compiled from §12.10, §13.2, §13.5–13.7,
-§13.9–13.10, §14.2, §14.3 and §14.8, plus five fixed principles. `docs/REVIEW-CHECKLIST.md` is §14.4.
+The constitution rules come from §12.10, §13.2, §13.5–13.7, §13.9–13.10, §14.2, §14.3 and §14.8 plus five
+fixed principles; the review checklist is §14.4.
 
 ## Configuration
 
 `.specify/extensions/blueprint/blueprint-config.yml` (see [config-template.yml](config-template.yml)):
-blueprint path (or several blueprints under `blueprints:`), specs folder, which sections go into the
-constitution and into every plan, second-level resolution, and the guard switch.
+blueprints, repositories, branch prefix and worktree folder, sections compiled into the constitution and
+every plan, guaranteed effort per step, metrics, the guard. A `.local.yml` next to it overrides it for one
+machine (a repository's settings one by one: `desk: {remote: …}` there keeps its path and gate).
 
 ## Helper script
 
 `.specify/extensions/blueprint/scripts/blueprint.py` (standard library only):
 
 ```bash
-blueprint.py status [--json|--brief]   # state per epic and the next step
-blueprint.py compile E03 [--force]     # feature folder for one epic
-blueprint.py bootstrap                 # constitution, checklist, decisions log, CLAUDE.md block
-blueprint.py section 14.4              # print a section by number
-blueprint.py find ENT-Order SCR-04     # print definitions by ID
-blueprint.py lint                      # structural linter, then refs
-blueprint.py refs                      # unresolved IDs per epic (exit 1 if any)
-blueprint.py stale                     # compiled epics whose blueprint text changed
-blueprint.py accept E01 --note "…"     # a built epic stays as built after a blueprint change
-blueprint.py rules                     # the constitution rules for the active feature's blueprint
+blueprint.py status [--json|--brief]        # state per epic and the next step
+blueprint.py compile E03 [--force] [--take] # feature folder for one epic
+blueprint.py bootstrap [--skip-lint]        # constitution rules, checklist, decisions log, CLAUDE.md block
+blueprint.py activate E03                   # make a compiled epic the active feature
+blueprint.py context | review-facts         # facts for the implement hooks
+blueprint.py section 14.4 | find ENT-Order  # read part of a blueprint
+blueprint.py lint | refs | stale | epics    # structure, references, staleness
+blueprint.py accept E01 --note "…"          # a built epic stays as built after a blueprint change
+blueprint.py repos E03 | gate E03           # repositories' git state; run their gates
+blueprint.py workspace E03 [--create]       # the epic's worktrees (a pushed branch is continued)
+blueprint.py workspace setup [E03] | link   # clone and fetch the repositories here; point them to the hub
+blueprint.py claims [--release KEY]         # which worktree builds which epic
+blueprint.py metrics [E03] [--brief|--write|--backfill]
+blueprint.py estimate [E05]
+blueprint.py dashboard [--export FILE] | statusline
+blueprint.py migrate [--apply]              # upgrade a 0.4 project
 # with several blueprints: --blueprint <id> on any command, or desk:E03 / DESK:DR-03
 ```
+
+## Upgrading from 0.4
+
+1. Update the extension (`specify extension add … v0.5.0`).
+2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
+   `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
+   table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not
+   convert. Review it, then `blueprint.py migrate --apply` and check the diff.
+3. Run `blueprint.py bootstrap --blueprint <id>` for each blueprint, so the managed blocks use this
+   version's wording; then `blueprint.py status`.
+4. Optional: `blueprint.py metrics --backfill` to start the metrics from the transcripts Claude Code still
+   keeps.
 
 ## Development
 
@@ -221,7 +342,9 @@ blueprint.py rules                     # the constitution rules for the active f
 python3 -m unittest discover -s tests -v
 ```
 
-The tests run the script against [tests/fixtures/mini-blueprint.md](tests/fixtures/mini-blueprint.md).
+The tests run the script against [tests/fixtures/mini-blueprint.md](tests/fixtures/mini-blueprint.md),
+real git repositories and worktrees in temporary folders, and synthetic Claude Code transcripts.
+[docs/DESIGN.md](docs/DESIGN.md) records the design and the reasons behind it.
 
 ## Keeping up with idea-to-blueprint
 
@@ -232,8 +355,8 @@ live in its own files, each of which reads the upstream copy and states where it
 
 | File | Changes to upstream |
 |---|---|
-| [commands/discover.md](commands/discover.md) | Runs upstream `SKILL.md`; adds the incremental and brownfield modes; replaces phase 4 (lint, bootstrap) and phase 5 (spec-kit flow) |
-| [references/speckit-flow.md](references/speckit-flow.md) | Overrides `blueprint-template.md` where compile and the spec-kit flow need it |
+| [commands/discover.md](commands/discover.md) | Runs upstream `SKILL.md` in subagent rounds; adds the incremental and brownfield modes; replaces phase 4 (lint, bootstrap) and phase 5 (Spec Kit flow) |
+| [references/speckit-flow.md](references/speckit-flow.md) | Overrides `blueprint-template.md` where compile and the Spec Kit flow need it |
 | [scripts/lint_blueprint.py](scripts/lint_blueprint.py) | Loads the upstream linter and drops the warnings it lists in `DROPPED` |
 
 To update:
@@ -245,20 +368,20 @@ git diff -- upstream/
 ```
 
 The sync replaces the copy, rewrites the manifest, prints the added, removed and changed files, and lists
-any anchor the overlay relies on that upstream removed (`SKILL.md` phase headings, the blueprint section
-numbers the constitution and plans read, the linter's finding hook). The tests fail if the copy was
-edited by hand or an anchor is gone. A weekly workflow
-([.github/workflows/upstream.yml](.github/workflows/upstream.yml)) opens one issue when upstream moves
-past the pinned commit.
+any anchor the overlay relies on that upstream removed. The tests fail if the copy was edited by hand or
+an anchor is gone. A weekly workflow ([.github/workflows/upstream.yml](.github/workflows/upstream.yml))
+opens one issue when upstream moves past the pinned commit.
 
 ## Limitations
 
-- Claude Code only for now. Other agents would need the hooks and the flow skill adapted.
-- In an existing project, agents other than Claude Code (Codex, Cursor) do not get the blueprint flow;
+- Claude Code only. Other agents would need the hooks, the subagent rounds and the flow skill adapted;
   they keep the project's own Spec Kit workflow.
-- Compile relies on the blueprint conventions in `upstream/idea-to-blueprint/references/blueprint-template.md` and
-  `references/speckit-flow.md` (ID schemes, epic and story headings, bold labels). Blueprints written by
-  hand in another shape will resolve fewer IDs; `blueprint.py refs` shows which.
+- Metrics read Claude Code's transcripts, which are not a public API: the parser is defensive and records
+  the Claude Code version, but a format change can leave gaps until it is updated. The live view sees the
+  sessions of this machine; other people's work arrives with the per-epic summaries (`metrics: commit`).
+- Compile relies on the blueprint conventions in `upstream/idea-to-blueprint/references/blueprint-template.md`
+  and `references/speckit-flow.md`. Blueprints written by hand in another shape resolve fewer IDs;
+  `blueprint.py refs` shows which.
 
 ## Credits and license
 

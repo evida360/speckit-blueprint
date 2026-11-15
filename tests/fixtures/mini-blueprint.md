@@ -4,6 +4,22 @@
 
 Fixture for the speckit-blueprint tests. Not a real product.
 
+## 1. Executive summary (Executive summary)
+
+Tally records a shop's sales in under ten seconds and shows the day's total.
+
+## 2. Problem, goals and success (Goals)
+
+G1 — a sale is recorded in under 10 seconds.
+
+## 3. Scope (Scope)
+
+In: recording, undo, daily totals. Out: inventory, tax.
+
+## 9. Research and benchmark (Research)
+
+Shops keep paper notebooks today [ASSUMED — fixture].
+
 ## 5. Personas
 
 ### P1 — Sara, shop owner (primary)
@@ -94,7 +110,7 @@ All responses use the error envelope `{ "error": { "code": … } }`.
 
 | Layer | Technology | Pinned version |
 |---|---|---|
-| Runtime | Node.js | 24.1.0 |
+| Runtime | Node.js | 24.1.0 [ASSUMED — fixture] |
 
 ### 13.2 Forbidden choices
 
@@ -142,6 +158,14 @@ Tests first.
 
 - [ ] Every AC has a test.
 - [ ] No improvised copy.
+- [ ] Every external symbol traces to a pinned dependency.
+- [ ] No helper duplicates one the codebase has.
+- [ ] Inputs are validated at the boundary.
+- [ ] Every endpoint checks authorization.
+- [ ] Tests assert behaviour, not implementation.
+- [ ] No skipped or flaky test.
+- [ ] Errors use the shared envelope.
+- [ ] Each story's diff stays under 400 lines.
 
 ### 14.8 Definition of green, definition of done, manual verification
 
@@ -172,6 +196,7 @@ Green means `check` passes.
 ### E00-S01 — Bootstrap the repository
 
 **Story** — As **P1 (Sara)**, I want a working repo, so that features can land.
+**Context** — P2 (Reza) reads the totals this repository will hold.
 **Acceptance Criteria**
 - AC-1 Given a clean clone, When `npm run check` runs, Then it passes (FF-01, DR-01).
 **Edge cases** — none.
@@ -248,8 +273,16 @@ Green means `check` passes.
 |---|---|---|
 | OQ-01 | Tax on sales? | Ignore in v1 |
 
+## 21. Delivery plan (Delivery Plan)
+
+E00, then E01.
+
 ## 22. Sources
 
 | ID | Title | URL |
 |---|---|---|
 | S-01 | Kavenegar docs | https://kavenegar.com/rest.html |
+
+## 23. Glossary (Glossary)
+
+- Rial — the currency unit amounts are stored in.
