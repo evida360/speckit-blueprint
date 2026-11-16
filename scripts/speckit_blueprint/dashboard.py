@@ -199,11 +199,18 @@ def build_state(root: Path, cfg: dict) -> dict:
         est = estimate(root, cfg, bcfg, bp, parts=parts, rates=rates, st=st)
         rows = {r["epic"]: r for r in st.get("epics", [])}
         epics = [epic_entry(root, cfg, bcfg, bp, e, rows[e["id"]], board, parts, est, reg) for e in bp.epics]
+        plan = bp.delivery_plan()
+        for x in epics:  # what the delivery plan says about the epic, for people
+            meta = plan["epics"].get(x["id"], {})
+            x.update(size=meta.get("size"), goal=meta.get("goal") or None, why=meta.get("why") or None,
+                     sprint=plan["home"].get(x["id"]), critical=x["id"] in plan["critical_path"])
         disc = {k.split(":")[1]: combine(v) for k, v in parts.items() if k in (f"{bid}:discover", f"{bid}:amend")}
         blueprints.append({
             "id": bid, "product": st.get("product"), "prefix": bcfg["prefix"], "state": st.get("state"),
             "blueprint": bcfg["blueprint_path"], "constitution": st.get("constitution"), "next": st.get("next"),
             "migration_needed": st.get("migration_needed"), "epics": epics,
+            "plan": {"sprints": plan["sprints"], "critical_path": plan["critical_path"],
+                     "order": (st.get("epic_order") or {}).get("epics", []), "sprint_estimates": est.get("sprints") or {}},
             "acs_total": sum(e["acs"] for e in epics), "acs_done": sum(e["acs"] for e in epics if e["state"] == "done"),
             "remaining": est.get("remaining"), "confidence": est.get("confidence"), "history": est.get("history"),
             "discovery": {k: {f: v.get(f) for f in ("agent_s", "cost_usd", "cost_estimated", "wait_s", "sessions")} | {"tokens": sum(v["tokens"].values())}

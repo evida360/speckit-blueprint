@@ -11,6 +11,9 @@
   then renders that snapshot once and never polls.
 -->
 <style>
+/* Layout: a sticky bar with the blueprint tabs; what needs you and the four figures; the sprint plan, its bars
+   sized by acceptance criteria; the epics grouped by sprint; the timeline by sprint; where the time and the money
+   went; the repositories. State colors mean the same thing everywhere: done, building, review, ready, blocked. */
 :root {
   color-scheme: light;
   --bg: #f3f3f0; --surface: #fcfcfb; --surface-2: #f0efec; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6b6a65;
@@ -18,6 +21,9 @@
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --act: #2a78d6; --fc: #86b6ef; --fc90: #b7d3f6;
   --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b; --violet: #6250d6;
   --good-ink: #006300; --crit-ink: #b42323; --warn-bg: #fff5dc; --crit-bg: #fdeceb; --info-bg: #eaf2fc; --focus: #2a78d6;
+  --ready: #b4b3ab; --blocked: #e4e3dc; --size: #a3a29b; --on-fill: #ffffff; --on-light: #0b0b0b; --shadow: rgba(11, 11, 11, .14); --band-hover: #e8e7e3;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -26,94 +32,212 @@
     --grid: #2c2c2a; --axis: #4a4a46; --border: rgba(255, 255, 255, .10);
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --act: #86b6ef; --fc: #3987e5; --fc90: #184f95;
     --violet: #9085e9; --good-ink: #3fc23f; --crit-ink: #f08a8a; --warn-bg: #33270d; --crit-bg: #3a1717; --info-bg: #142338; --focus: #6da7ec;
+    --ready: #5f5e59; --blocked: #30302d; --size: #6b6a65; --on-light: #f0efec; --shadow: rgba(0, 0, 0, .5); --band-hover: #2e2e2b;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; }
-main { max-width: 1240px; margin: 0 auto; padding: 16px 24px 40px; }
-h1 { font-size: 20px; margin: 0; font-weight: 650; }
-h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); -webkit-text-size-adjust: 100%; }
+main { max-width: 1240px; margin: 0 auto; padding: 0 24px 40px; }
+h1 { font-size: 18px; margin: 0; font-weight: 650; line-height: 1.2; }
+h2 { font-size: 15px; margin: 0; font-weight: 650; text-wrap: balance; }
 h4 { font-size: 12.5px; margin: 14px 0 6px; color: var(--ink-2); font-weight: 600; }
-code { font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+code { font: 12px/1.35 var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .meta { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
 .empty { color: var(--muted); margin: 4px 0; }
 .nowrap { white-space: nowrap; }
-header.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin: 6px 0 16px; }
-.hdr { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
+
+/* the sticky bar: brand and tabs hold their place; the live clock has a fixed width at the far end */
+header.top { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; column-gap: 28px; row-gap: 10px; margin: 0 -24px 16px; padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--grid); }
+.brand { display: grid; gap: 1px; grid-column: 1; grid-row: 1; }
 .sub { font-size: 12.5px; color: var(--ink-2); }
-.pick { font-size: 12.5px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; }
-select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
-.live { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.tabs { grid-column: 2; grid-row: 1; justify-self: start; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 9px; }
+.tab { font: inherit; font-size: 13px; color: var(--ink-2); background: none; border: 0; border-radius: 7px; padding: 4px 12px; cursor: pointer; display: inline-flex; align-items: baseline; gap: 7px; }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.tab .pct { font-size: 11.5px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; min-width: 3.2ch; text-align: right; }
+.live { grid-column: 4; grid-row: 1; min-width: 10.5em; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--axis); flex: none; }
 .live.ok::before { background: var(--good); }
 .live.stale::before { background: var(--warn); }
 .live.bad::before { background: var(--crit); }
 .live.stale, .live.bad { color: var(--ink); font-weight: 600; }
+
 .banner { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; background: var(--surface); }
 .banner.err { background: var(--crit-bg); }
 .banner.warn { background: var(--warn-bg); }
 .banner.info { background: var(--info-bg); }
+
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 16px; }
 .kpi, section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
 section.card { margin: 0 0 16px; }
+.card-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 12px; }
+.card-h .lede { font-size: 12.5px; color: var(--muted); }
 .kpi .lbl { font-size: 12.5px; color: var(--ink-2); }
 .kpi .val { font-size: 26px; font-weight: 600; line-height: 1.15; margin: 4px 0 8px; }
 .kpi .sub { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
 .meter { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 8px; }
 .meter i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
-.count { font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 1px 8px; margin-left: 4px; }
+.count { font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 1px 8px; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 12px 7px 0; border-bottom: 1px solid var(--grid); vertical-align: top; }
 th { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
 .num { text-align: right; }
-td.path { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; max-width: 48ch; }
-td.gate code { overflow-wrap: normal; }
 table.mini { font-size: 13px; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
 .dot.working { background: var(--good); }
 .dot.waiting { background: var(--warn); }
 .chip { display: inline-block; font-size: 11.5px; line-height: 1.5; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); margin: 1px 4px 1px 0; white-space: nowrap; }
 .chip.dim { opacity: .6; }
-.badge { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.badge i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
-.b-done i { background: var(--good); }
-.b-building i, .b-elsewhere i { background: var(--s1); }
-.b-implemented i { background: var(--violet); }
-.b-blocked i { background: var(--warn); }
-.b-stale i { background: var(--serious); }
-.warnline { display: block; margin: 4px 0 0; font-size: 12.5px; color: var(--ink); font-weight: 400; }
-.warnline::before { content: "!"; display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: var(--warn); color: #0b0b0b; font-size: 11px; font-weight: 700; margin-right: 6px; }
-.warnline.inline { display: inline; }
+.chip i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--axis); vertical-align: 0; }
+.chip.c-done i { background: var(--good); }
+.chip.c-open i { background: var(--warn); }
 .ok { color: var(--good-ink); }
 .bad { color: var(--crit-ink); }
-.bphead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 4px 0 10px; }
-.ep-group + .ep-group { margin-top: 24px; }
+.warnline { display: block; margin: 3px 0 0; font-size: 12.5px; color: var(--ink); font-weight: 400; }
+.warnline::before { content: "!"; display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 50%; background: var(--warn); color: #0b0b0b; font-size: 11px; font-weight: 700; margin-right: 6px; }
+
+/* state, everywhere: a dot and a word in pills, a fill in bars */
+.badge { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 12px; white-space: nowrap; }
+.badge i, .lg i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--axis); }
+.st-done i, .blk.st-done { background: var(--good); }
+.st-building i, .st-elsewhere i, .blk.st-building, .blk.st-elsewhere { background: var(--s1); }
+.st-review i, .blk.st-review { background: var(--violet); }
+.st-stale i, .blk.st-stale { background: var(--serious); }
+.st-ready i, .blk.st-ready { background: var(--ready); }
+.st-blocked i, .blk.st-blocked { background: var(--blocked); }
+.badge.st-blocked i, .lg.st-blocked i { box-shadow: inset 0 0 0 1px var(--axis); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg i { width: 12px; height: 12px; border-radius: 3px; }
+
+/* needs you */
+.needs { list-style: none; margin: 0; padding: 0; }
+.nd { display: grid; grid-template-columns: 128px minmax(0, 1fr) minmax(0, auto); gap: 2px 16px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--grid); }
+.nd:first-child { border-top: 0; padding-top: 0; }
+.nd:last-child { padding-bottom: 0; }
+.nd-tag { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.nd-tag i { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.t-wait .nd-tag i { background: var(--warn); }
+.t-fix .nd-tag i { background: var(--serious); }
+.t-next .nd-tag i { background: var(--s1); }
+.t-ready .nd-tag i { box-shadow: inset 0 0 0 2px var(--s1); }
+.t-check .nd-tag i { box-shadow: inset 0 0 0 2px var(--muted); }
+.nd-main { min-width: 0; overflow-wrap: anywhere; }
+.nd-main strong { font-weight: 600; }
+.nd-cmd { justify-self: end; text-align: right; min-width: 0; }
+.nd-cmd code { white-space: normal; }
+
+/* disclosure: a chevron for blueprints and sprints, a small caret for epics */
+.chev { flex: none; width: 16px; height: 16px; display: inline-grid; place-items: center; }
+.chev::before { content: ""; width: 6px; height: 6px; border-right: 2px solid var(--ink-2); border-bottom: 2px solid var(--ink-2); transform: rotate(-45deg); transition: transform .15s; margin-left: -2px; }
+details[open] > summary > .chev::before { transform: rotate(45deg); margin: -3px 0 0; }
+summary.flat { list-style: none; cursor: pointer; }
+summary.flat::-webkit-details-marker { display: none; }
+
+/* a blueprint, folded (several blueprints at once) */
+details.bpg { border: 1px solid var(--grid); border-radius: 10px; }
+details.bpg + details.bpg { margin-top: 10px; }
+details.bpg > summary { display: grid; grid-template-columns: 16px minmax(0, 1fr) 220px 200px; align-items: center; gap: 4px 16px; padding: 12px 14px; border-radius: 10px; }
+details.bpg > summary:hover { background: var(--surface-2); }
+details.bpg[open] > summary { border-bottom: 1px solid var(--grid); border-radius: 10px 10px 0 0; }
+.bpg-name { display: grid; gap: 2px; min-width: 0; }
+.bpg-t { font-size: 15px; font-weight: 650; }
+.bpg-s { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.bpg-m { justify-self: end; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bpg-m b { color: var(--ink); font-weight: 600; }
+.bpg-body { padding: 12px 14px 8px; }
+.ribbon { display: flex; gap: 2px; width: 100%; height: 8px; }
+.rb { flex: 1 1 0; min-width: 3px; height: 100%; border-radius: 2px; overflow: hidden; background: var(--blocked); }
+.rb i { display: block; height: 100%; background: var(--good); }
+.rb.rb-cur { background: var(--fc90); }
+
+/* sprints */
+.sp-group + .sp-group { margin-top: 22px; }
+details.sp-fold { border-bottom: 1px solid var(--grid); }
+details.sp-fold > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 0; border-radius: 6px; }
+details.sp-fold > summary:hover { background: var(--surface-2); }
+.fold-t { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink-2); }
+.fold-m { margin-left: auto; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+details.sp-fold[open] > summary { border-bottom: 1px solid var(--grid); border-radius: 6px 6px 0 0; }
+details.sp-fold .sp:last-child { border-bottom: 0; }
+.sp-head, .sp { display: grid; grid-template-columns: 236px minmax(0, 1fr) 112px 156px; gap: 6px 18px; align-items: center; }
+.sp-head { font-size: 12px; font-weight: 600; color: var(--ink-2); padding: 0 0 6px; border-bottom: 1px solid var(--grid); }
+.sp { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+.sp:last-child { border-bottom: 0; }
+.sp-name { min-width: 0; display: grid; gap: 3px; }
+.sp-top { display: flex; align-items: center; gap: 8px; }
+.sp-id { font: 600 12px/1.4 var(--mono); color: var(--ink-2); }
+.sp-ms { font-weight: 600; overflow-wrap: anywhere; text-wrap: balance; }
+.sp.s-done .sp-ms { font-weight: 500; color: var(--ink-2); }
+.pill { font-size: 11px; font-weight: 600; line-height: 1.6; padding: 0 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.pill.p-current { background: var(--info-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--s1); }
+.pill.p-done { color: var(--good-ink); }
+.sp-plan { min-width: 0; }
+.segbar { display: flex; gap: 2px; height: 22px; }
+.blk { flex: 0 1 auto; min-width: 4px; height: 100%; border-radius: 4px; display: flex; align-items: center; padding: 0 6px; overflow: hidden; font: 600 11px/1 var(--mono); white-space: nowrap; color: var(--on-fill); }
+.blk.st-stale { color: #0b0b0b; }
+.blk.st-ready { color: var(--on-light); }
+.blk.st-blocked { color: var(--muted); }
+.sp-exit { font-size: 12px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+.sp-exit b { font-weight: 600; color: var(--ink-2); }
+.sp-fig, .sp-when { font-size: 13px; font-variant-numeric: tabular-nums; }
+.sp-fig b { font-size: 15px; font-weight: 600; }
+.sp-when b { font-weight: 600; }
+
+/* epics: a sprint is a filled band; its epics hang under it, indented on a guide line */
+.ep-group + .ep-group { margin-top: 26px; }
+.bphead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 10px; }
 .next { font-size: 13px; color: var(--ink-2); }
-.ep-cols, details.epic > summary { display: grid; grid-template-columns: minmax(0, 1fr) 176px 150px 120px 120px; gap: 14px; align-items: start; padding: 9px 8px; }
-.ep-cols { font-size: 12px; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--grid); padding-top: 0; }
-details.epic { border-bottom: 1px solid var(--grid); }
+.tools { margin-left: auto; display: inline-flex; gap: 4px; }
+.tool { font: inherit; font-size: 12.5px; color: var(--ink-2); background: none; border: 1px solid var(--grid); border-radius: 6px; padding: 2px 9px; cursor: pointer; }
+.tool:hover { color: var(--ink); background: var(--surface-2); }
+.ep-cols, details.epic > summary { display: grid; grid-template-columns: minmax(0, 1fr) 150px 124px 136px 104px 116px; gap: 14px; align-items: start; padding: 8px 8px; }
+.ep-cols { font-size: 12px; font-weight: 600; color: var(--ink-2); padding-top: 0; padding-bottom: 6px; }
+.ep-cols.indent { margin-left: 20px; }
+details.sg { margin: 8px 0 0; }
+details.sg > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 9px 12px 9px 8px; background: var(--surface-2); border-radius: 8px; }
+details.sg > summary:hover { background: var(--band-hover); }
+details.sg.s-current > summary { background: var(--info-bg); }
+.sp-chip { font: 600 11.5px/1.6 var(--mono); padding: 0 6px; border-radius: 5px; background: var(--surface); color: var(--ink); }
+.sg-title { font-size: 14px; font-weight: 650; }
+.sg-meter { flex: none; width: 72px; height: 6px; border-radius: 3px; background: var(--surface); overflow: hidden; }
+.sg-meter i { display: block; height: 100%; background: var(--good); }
+.sg-m { margin-left: auto; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sg-body { margin: 2px 0 4px 18px; border-left: 2px solid var(--grid); }
+details.epic { border-top: 1px solid var(--grid); }
+.sg-body > details.epic:first-child { border-top: 0; }
 details.epic > summary { cursor: pointer; list-style: none; border-radius: 6px; }
 details.epic > summary::-webkit-details-marker { display: none; }
 details.epic > summary:hover { background: var(--surface-2); }
-summary:focus-visible, select:focus-visible, g.row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+summary:focus-visible, select:focus-visible, .tab:focus-visible, g.row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .c-title { position: relative; padding-left: 18px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .c-title::before { content: ""; position: absolute; left: 3px; top: 5px; border: 5px solid transparent; border-left: 6px solid var(--muted); transition: transform .15s; transform-origin: 3px 5px; }
-details[open] > summary .c-title::before { transform: rotate(90deg); }
-.eid { color: var(--ink-2); margin-right: 4px; }
+details.epic[open] > summary .c-title::before { transform: rotate(90deg); }
+.eid { font: 600 12.5px var(--mono); color: var(--ink-2); margin-right: 6px; }
+.tags { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.tag-cp::before { content: "◆"; color: var(--ink); margin-right: 4px; font-size: 10px; }
+.tags .warnline { margin: 0; font-size: 12px; }
 .c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.c-size { display: flex; align-items: center; gap: 8px; }
+.sz { flex: none; width: 22px; text-align: center; font: 600 11px/18px var(--mono); border-radius: 4px; background: var(--surface-2); color: var(--ink-2); }
+.sbar { flex: 1; height: 6px; border-radius: 3px; overflow: hidden; }
+.sbar i { display: block; height: 100%; background: var(--size); border-radius: 0 3px 3px 0; }
 .c-tasks { display: flex; align-items: center; gap: 8px; }
 .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--good); border-radius: 3px; }
-.frac { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.frac { font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .epic-body { padding: 4px 8px 14px 26px; }
+.plan-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 6px 0 4px; font-size: 13px; }
+.plan-dl dt { color: var(--muted); }
+.plan-dl dd { margin: 0; overflow-wrap: anywhere; }
 .note { font-size: 12.5px; color: var(--ink-2); margin: 6px 0; }
 .story { margin: 4px 0 8px; }
 .story-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-weight: 600; font-size: 13px; }
 .story-h .meta { display: inline; }
-.sid { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sid { color: var(--ink-2); font: 600 12px var(--mono); }
 .sst { font-size: 11.5px; font-weight: 400; color: var(--ink-2); }
 .sst::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--axis); }
 .sst.s-done::before { background: var(--good); }
@@ -126,7 +250,7 @@ ul.tasks li.next { background: var(--info-bg); }
 .cb.on { background: var(--good); border-color: var(--good); }
 .cb.on::after { content: ""; position: absolute; left: 3px; top: 0; width: 3.5px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .tid { background: none; padding: 0; color: var(--ink-2); }
-.seed { font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+.seed { font: 11.5px var(--mono); color: var(--muted); }
 .ttl { flex: 1 1 220px; min-width: 0; }
 .when { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
 li.next .when { color: var(--ink); font-weight: 600; }
@@ -134,58 +258,91 @@ dl.details { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 12px 0 0; fo
 dl.details div { display: flex; gap: 6px; }
 dl.details dt { color: var(--muted); }
 dl.details dd { margin: 0; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--ink-2); margin: 0 0 10px; }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* charts */
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .sw.line { width: 2px; height: 14px; border-radius: 0; background: var(--ink-2); }
-svg.chart { display: block; max-width: 100%; height: auto; font: 11.5px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.sw.dia { width: 9px; height: 9px; border-radius: 1px; transform: rotate(45deg); background: var(--ink-2); }
+svg.chart { display: block; max-width: 100%; height: auto; font: 11.5px var(--sans); }
 svg .lbl { fill: var(--ink); }
+svg .lbl.sprint { font-weight: 650; }
 svg .grp { fill: var(--ink); font-weight: 650; }
 svg .axis { fill: var(--muted); font-variant-numeric: tabular-nums; }
 svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .base { stroke: var(--axis); stroke-width: 1; }
 svg .now { stroke: var(--ink-2); stroke-width: 1.5; }
+svg .ref { stroke: var(--ink-2); stroke-width: 1; }
 svg .hit { fill: transparent; }
+svg .band { fill: var(--surface-2); }
 svg g.row:hover .hit, svg g.row:focus .hit { fill: var(--surface-2); }
 svg g.row { outline: none; }
 svg .in { fill: #fff; font-weight: 600; }
+svg .ms-done { fill: var(--good); stroke: var(--surface); stroke-width: 2; }
+svg .ms-fc { fill: var(--s1); stroke: var(--surface); stroke-width: 2; }
+svg .dot-a { stroke: var(--surface); stroke-width: 2; }
 .act { fill: var(--act); background: var(--act); }
 .fc { fill: var(--fc); background: var(--fc); }
 .fc90 { fill: var(--fc90); background: var(--fc90); }
 .m1 { fill: var(--s1); background: var(--s1); }
 .m2 { fill: var(--s2); background: var(--s2); }
 .m3 { fill: var(--s3); background: var(--s3); }
+.de { fill: var(--axis); background: var(--axis); }
+.headline { font-size: 13.5px; margin: 0 0 12px; color: var(--ink); }
+.headline b { font-weight: 650; }
 details.tv { margin-top: 10px; font-size: 12.5px; }
 details.tv > summary { cursor: pointer; color: var(--ink-2); width: max-content; }
 details.tv table { margin-top: 6px; }
+td.repo-name { min-width: 15em; }
+td.repo-name .meta { overflow-wrap: anywhere; }
+td.gate code { overflow-wrap: normal; }
 footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px; }
-#tip { position: fixed; z-index: 10; pointer-events: none; max-width: 360px; padding: 7px 10px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 12px; line-height: 1.45; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .22); }
+#tip { position: fixed; z-index: 10; pointer-events: none; max-width: 380px; padding: 7px 10px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 12px; line-height: 1.45; white-space: pre-line; box-shadow: 0 4px 14px rgba(0, 0, 0, .22); }
 [hidden] { display: none !important; }
-@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 520px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 900px) {
+
+@media (max-width: 1060px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ep-cols { display: none; }
-  details.epic > summary { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; }
+  details.epic > summary { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px 12px; }
   .c-title { grid-column: 1 / -1; }
   .c-num { text-align: left; }
   details.epic > summary [data-label]::before { content: attr(data-label); display: block; font-size: 11.5px; color: var(--muted); }
-  .c-tasks { flex-wrap: wrap; }
-  .c-tasks::before { width: 100%; }
+  .c-size, .c-tasks { flex-wrap: wrap; }
+  .c-size::before, .c-tasks::before { width: 100%; }
   .epic-body { padding-left: 8px; }
 }
-@media (max-width: 700px) { main { padding: 12px 16px 32px; } }
-@media (prefers-reduced-motion: reduce) { .c-title::before { transition: none; } }
+@media (max-width: 860px) {
+  header.top { grid-template-columns: minmax(0, 1fr) auto; }
+  .tabs { grid-column: 1 / -1; grid-row: 2; }
+  .live { grid-column: 2; }
+  .sp-head { display: none; }
+  .ep-cols.indent { margin-left: 0; }
+  .sg-body { margin-left: 6px; }
+  details.bpg > summary { grid-template-columns: 16px minmax(0, 1fr); }
+  details.bpg > summary > .ribbon, details.bpg > summary > .bpg-m { grid-column: 2; justify-self: stretch; }
+  .sp { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .sp-name, .sp-plan { grid-column: 1 / -1; }
+  .nd { grid-template-columns: minmax(0, 1fr); }
+  .nd-cmd { justify-self: start; text-align: left; }
+  details.epic > summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) { main { padding: 0 16px 32px; } header.top { position: static; margin: 0 -16px 14px; padding: 10px 16px; } }
+@media (max-width: 520px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .c-title::before, .chev::before { transition: none; } }
 </style>
 </head>
 <body>
 <main id="main">
-  <header class="top"><div id="hdr" class="hdr"><h1>Blueprint dashboard</h1></div><span id="live" class="live">Connecting…</span></header>
+  <header class="top"><div id="hdr" class="brand"><h1>Blueprint dashboard</h1></div><nav id="tabs" class="tabs" aria-label="Blueprint" hidden></nav><span id="live" class="live">Connecting…</span></header>
   <div id="fatal" class="banner err" role="alert" hidden></div>
   <div id="banners"></div>
+  <section id="needs" class="card" aria-label="Needs you" hidden></section>
   <div id="kpis" class="kpis"></div>
+  <section id="sprints" class="card" aria-label="Sprints" hidden></section>
   <section id="sessions" class="card" aria-label="Active sessions" hidden></section>
   <section id="epics" class="card" aria-label="Epics" hidden></section>
   <section id="timeline" class="card" aria-label="Timeline" hidden></section>
   <section id="breakdown" class="card" aria-label="Where the time went" hidden></section>
+  <section id="rates" class="card" aria-label="What an acceptance criterion costs" hidden></section>
   <section id="repos" class="card" aria-label="Repositories" hidden></section>
   <section id="discovery" class="card" aria-label="Discovery and amendments" hidden></section>
   <footer id="foot"></footer>
@@ -199,6 +356,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   // ---------- small helpers; the state is read defensively everywhere ----------
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const POLL_MS = 3000, STALE_MS = 10000;
+  const ACTIVE = ['compiled', 'stale', 'tasked', 'in-progress', 'implemented'];
   const arr = v => (Array.isArray(v) ? v : []);
   const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
   const isNum = v => typeof v === 'number' && isFinite(v);
@@ -210,6 +368,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : '');
   const clip = (s, n) => (s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s);
   const domId = (prefix, key) => `${prefix}-${String(key).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
 
   // ---------- HTML: every interpolated value is escaped unless it is already markup (Raw) ----------
   class Raw { constructor(s) { this.s = s; } toString() { return this.s; } }
@@ -218,7 +377,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   const part = v => (v == null || v === false ? '' : v instanceof Raw ? v.s : Array.isArray(v) ? v.map(part).join('') : esc(v));
   const html = (strings, ...vals) => new Raw(strings.reduce((out, s, i) => out + part(vals[i - 1]) + s));
   const join = (list, sep) => new Raw(list.map(part).filter(Boolean).join(esc(sep)));
-  const OPEN = new Raw(' open'), SELECTED = new Raw(' selected');
+  const OPEN = new Raw(' open');
 
   // ---------- units, formatted in one place (the same rules as units.py) ----------
   function dur(seconds, calendar) {
@@ -235,12 +394,21 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     ? '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (estimated ? '+' : '') : '—');
   // work recorded without a cost (Claude Code writes it when a session ends) costs "unknown", never $0.00
   const costOf = (usd, estimated, sessions) => (isNum(usd) ? money(usd, estimated) : num(sessions) ? 'unknown' : '—');
-  const tok = n => (!isNum(n) ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)));
+  const tok = n => (!isNum(n) ? '—' : n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)));
   function range(pair, f) {
     const p = arr(pair), lo = isNum(p[0]) ? p[0] : p[1], hi = isNum(p[1]) ? p[1] : p[0];
     if (!isNum(lo)) return '—';
     const a = f(lo), b = f(hi);
     return a === b ? a : `${a} – ${b}`;
+  }
+  // estimates in a row are ranges people read at a glance: whole hours and whole dollars; the exact range is in the tooltip
+  const roughDur = s => (s >= 86400 ? dur(s, true) : s >= 3600 ? `${Math.round(s / 3600)}h` : `${Math.max(1, Math.round(s / 60))}m`);
+  const roughMoney = v => '$' + Math.round(v).toLocaleString('en-US');
+  function rough(pair, f) {
+    const p = arr(pair), lo = isNum(p[0]) ? p[0] : p[1], hi = isNum(p[1]) ? p[1] : p[0];
+    if (!isNum(lo)) return '';
+    const a = f(lo), b = f(hi);
+    return a === b ? a : `${a}–${b}`;
   }
   // ISO timestamps (any offset, "Z", microseconds) to epoch ms; a bare date is local midnight.
   const ISO = /^(\d{4})-(\d\d)-(\d\d)(?:[T ](\d\d):(\d\d)(?::(\d\d)(?:[.,](\d+))?)?\s*(Z|[+-]\d\d:?\d\d)?)?$/i;
@@ -261,8 +429,8 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   // ---------- page state ----------
   const SNAPSHOT = typeof window.__STATE__ !== 'undefined';
-  const ui = { bp: 'all', open: new Set(), auto: new Set(), state: null, error: null, lastOk: 0 };
-  const ctx = { now: Date.now(), multi: false, index: new Map() };
+  const ui = { bp: 'all', open: new Set(), auto: new Set(), groups: new Map(), state: null, error: null, lastOk: 0 };
+  const ctx = { now: Date.now(), multi: false, index: new Map(), sprints: new Map() };
   const fromHash = /(?:^#|&)bp=([^&]*)/.exec(location.hash || '');
   if (fromHash) { try { ui.bp = decodeURIComponent(fromHash[1]) || 'all'; } catch (_) { ui.bp = 'all'; } }
 
@@ -271,31 +439,105 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   const epicsOf = b => arr(b.epics).filter(e => e && typeof e === 'object');
   const keyOf = (b, e) => String(e.key || `${b.id}:${e.id}`);
   const bpName = b => String(b.product || b.id || 'Blueprint');
+  const bpShort = b => String(b.prefix || b.id || 'Blueprint');
   const inBp = key => ui.bp === 'all' || String(key || '').startsWith(ui.bp + ':');
   function epicRef(key) { // "E01", or "desk:E01" when the project has several blueprints
     const hit = ctx.index.get(key);
     if (hit) return ctx.multi ? `${hit.b.id}:${hit.e.id}` : String(hit.e.id);
     return ctx.multi ? String(key || '') : String(key || '').replace(/^[^:]*:/, '');
   }
+  const refOf = (b, e) => (ctx.multi ? `${b.id}:${e.id}` : String(e.id));
+  const isWorking = e => ACTIVE.includes(e.state) || (e.elsewhere && typeof e.elsewhere === 'object') || (e.started && typeof e.started === 'object');
+
+  // The epics in delivery order (the plan's order, which puts an epic after the open ones it depends on)
+  function ordered(b) {
+    const eps = epicsOf(b), order = arr(obj(b.plan).order).map(String);
+    if (!order.length) return eps;
+    const byId = new Map(eps.map(e => [String(e.id), e]));
+    return order.map(id => byId.get(id)).filter(Boolean).concat(eps.filter(e => !order.includes(String(e.id))));
+  }
+
+  // ---------- sprints, from the delivery plan's sprints table (§16.2) ----------
+  const sprintName = s => (s.label === null ? 'Not in a sprint' : /^\d+$/.test(s.label) ? `Sprint ${s.label}` : s.label);
+  const sprintId = s => (s.label === null ? '—' : /^\d+$/.test(s.label) ? `S${s.label}` : s.label);
+
+  function makeSprint(b, label, milestone, exit, epics, early, est) {
+    const acts = epics.map(e => obj(e.actual));
+    const firsts = acts.map(a => ts(a.first)).filter(isNum), lasts = acts.map(a => ts(a.last)).filter(isNum);
+    const worked = acts.filter(a => num(a.sessions) > 0), priced = worked.filter(a => isNum(a.cost_usd));
+    const done = epics.filter(e => e.state === 'done');
+    return {
+      b, label, milestone, exit, epics, early, est: est && typeof est === 'object' ? est : null,
+      acs: sum(epics, e => e.acs), acsDone: sum(done, e => e.acs), n: epics.length, nDone: done.length,
+      done: epics.length > 0 && done.length === epics.length,
+      started: done.length > 0 || epics.some(e => isWorking(e) || num(obj(e.actual).sessions) > 0),
+      first: firsts.length ? Math.min(...firsts) : null, last: lasts.length ? Math.max(...lasts) : null,
+      agent: sum(acts, a => a.agent_s), wait: sum(acts, a => a.wait_s),
+      cost: priced.length ? sum(priced, a => a.cost_usd) : null,
+      costEstimated: priced.length > 0 && (priced.length < worked.length || priced.some(a => a.cost_estimated)),
+    };
+  }
+
+  function sprintsOf(b) { // [] when the blueprint has no sprints table
+    if (ctx.sprints.has(b)) return ctx.sprints.get(b);
+    const plan = obj(b.plan), est = obj(plan.sprint_estimates), eps = epicsOf(b);
+    const byId = new Map(eps.map(e => [String(e.id), e]));
+    const out = [];
+    for (const s of arr(plan.sprints).filter(x => x && typeof x === 'object')) {
+      const label = String(s.label == null ? '' : s.label), ids = arr(s.epics).map(String), notes = obj(s.notes);
+      const mine = ids.filter(id => byId.has(id) && String(byId.get(id).sprint) === label).map(id => byId.get(id));
+      const early = ids.filter(id => byId.has(id) && String(byId.get(id).sprint) !== label).map(id => ({ e: byId.get(id), note: String(notes[id] || '') }));
+      out.push(makeSprint(b, label, String(s.milestone || ''), String(s.exit || ''), mine, early, est[label]));
+    }
+    if (out.length) {
+      const loose = eps.filter(e => !e.sprint);
+      if (loose.length) out.push(makeSprint(b, null, 'Not in a sprint', 'The sprints table of the delivery plan does not list these epics.', loose, [], null));
+      let current = null;
+      for (const s of out) {
+        s.status = s.done ? 'done' : !current && s.label !== null ? 'current' : s.started ? 'started' : 'planned';
+        if (s.status === 'current') current = s;
+      }
+    }
+    ctx.sprints.set(b, out);
+    return out;
+  }
+  const currentSprint = b => sprintsOf(b).find(s => s.status === 'current') || null;
+  const numbered = b => sprintsOf(b).filter(s => s.label !== null && /^\d+$/.test(s.label));
 
   function prepare(st) {
     ctx.now = SNAPSHOT ? ts(st.generated) || Date.now() : Date.now();
     ctx.multi = blueprints(st).length > 1;
     ctx.index = new Map();
-    for (const b of blueprints(st)) for (const e of epicsOf(b)) ctx.index.set(keyOf(b, e), { b, e });
+    ctx.sprints = new Map();
+    ctx.unlocks = new Map(); // epic key → the epics that wait for it
+    for (const b of blueprints(st)) for (const e of epicsOf(b)) {
+      ctx.index.set(keyOf(b, e), { b, e });
+      for (const dep of arr(e.blocked_by)) {
+        const k = String(dep).includes(':') ? String(dep) : `${b.id}:${dep}`;
+        if (!ctx.unlocks.has(k)) ctx.unlocks.set(k, []);
+        ctx.unlocks.get(k).push(e);
+      }
+    }
     if (ui.bp !== 'all' && !blueprints(st).some(b => b.id === ui.bp)) ui.bp = 'all';
-    for (const [key, { e }] of ctx.index) { // the epic being built starts expanded, once
-      if ((e.state === 'in-progress' || e.state === 'implemented') && !ui.auto.has(key)) { ui.auto.add(key); ui.open.add(key); }
+    // the epic being built starts expanded, once, where one blueprint is shown (several would bury the page in tasks)
+    if (ui.bp !== 'all' || !ctx.multi) for (const [key, { b, e }] of ctx.index) {
+      if (inBp(key) && b && (e.state === 'in-progress' || e.state === 'implemented') && !ui.auto.has(key)) { ui.auto.add(key); ui.open.add(key); }
     }
   }
 
-  // ---------- header, banners, KPI cards ----------
+  // ---------- header, tabs, banners ----------
   function header(st) {
+    const list = blueprints(st), one = list.length === 1 ? list[0] : null;
+    return html`<h1>${st.project || 'Project'}</h1><span class="sub">${one && one.product ? `${one.product} · ` : ''}blueprint dashboard</span>`;
+  }
+
+  function tabs(st) {
     const list = blueprints(st);
-    const one = list.length === 1 ? list[0] : null;
-    const opts = [{ id: 'all', label: 'All' }].concat(list.map(b => ({ id: b.id, label: b.product && b.product !== b.id ? `${b.product} (${b.id})` : String(b.id) })));
-    const pick = list.length > 1 ? html`<label class="pick">Blueprint <select id="bp">${opts.map(o => html`<option value="${o.id}"${o.id === ui.bp ? SELECTED : ''}>${o.label}</option>`)}</select></label>` : '';
-    return html`<div><h1>${st.project || 'Project'}</h1><div class="sub">${one && one.product ? `${one.product} · ` : ''}blueprint dashboard</div></div>${pick}`;
+    if (list.length < 2) return '';
+    const acs = l => sum(l, b => (isNum(b.acs_total) ? b.acs_total : sum(epicsOf(b), e => e.acs)));
+    const done = l => sum(l, b => (isNum(b.acs_done) ? b.acs_done : sum(epicsOf(b).filter(e => e.state === 'done'), e => e.acs)));
+    const tab = (id, label, l, title) => html`<button type="button" class="tab" role="tab" id="${domId('tab', id)}" data-bp="${id}" aria-selected="${ui.bp === id ? 'true' : 'false'}" title="${title}">${label}<span class="pct">${pct(done(l), acs(l))}%</span></button>`;
+    return [tab('all', 'All', list, 'Every blueprint'), ...list.map(b => tab(b.id, bpShort(b), [b], bpName(b)))];
   }
 
   function banners(st) {
@@ -304,14 +546,71 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
       out.push(html`<div class="banner err" role="alert"><strong>${st ? 'Could not refresh.' : 'Could not load the dashboard state.'}</strong> ${ui.error}${st && ui.lastOk ? html` <span class="muted">Showing the last good state, from ${ftime(ui.lastOk)}.</span>` : ''}</div>`);
     }
     if (!st) return out.length || SNAPSHOT ? out : html`<p class="empty">Loading the dashboard state…</p>`;
-    for (const b of selected(st)) {
-      const why = arr(b.migration_needed);
-      if (why.length) out.push(html`<div class="banner warn"><strong>Migration needed${ctx.multi ? ` in ${bpName(b)}` : ''}.</strong>${why.map(r => html`<div>• ${r}</div>`)}<div>Run <code>blueprint.py migrate</code>.</div></div>`);
-    }
     if (st.metrics === 'off') out.push(html`<div class="banner info"><strong>Metrics are off.</strong> Time, cost and forecasts need <code>metrics: local</code> (or <code>commit</code>) in the config.</div>`);
     return out;
   }
 
+  // ---------- needs you: what waits on a person, most urgent first ----------
+  function nextCommand(b, n) {
+    const cmd = String(n.command || '');
+    if (cmd === 'bootstrap' || cmd === 'migrate') return `blueprint.py ${cmd}${ctx.multi ? ` --blueprint ${b.id}` : ''}`;
+    if (cmd === 'speckit-blueprint-compile' && n.epic) return `/${cmd} ${ctx.multi ? `${b.id}:` : ''}${n.epic}`;
+    return `/${cmd}`;
+  }
+
+  function needs(st) {
+    const items = [], sel = selected(st);
+    // sessions that wait for an answer, one line per epic
+    const waiting = arr(st.sessions).filter(s => s && s.kind === 'waiting' && inBp(s.epic));
+    const byEpic = new Map();
+    for (const s of waiting) { const k = String(s.epic || s.feature || '?'); if (!byEpic.has(k)) byEpic.set(k, []); byEpic.get(k).push(s); }
+    for (const [k, list] of byEpic) {
+      const hit = ctx.index.get(k), longest = Math.max(...list.map(s => num(s.for_s)));
+      const what = hit ? `${epicRef(k)} ${hit.e.title || ''}` : base(k);
+      const done = hit && hit.e.state === 'done';
+      items.push({ tone: 'wait', tag: `Waiting · ${dur(longest)}`, title: list.length > 1 ? `${list.length} sessions on ${what} wait for your answer` : `A session on ${what} waits for your answer`,
+        detail: done ? 'The epic is done: close these sessions when nothing is left in them.' : `In ${[...new Set(list.map(s => base(s.worktree)))].join(', ')}.`, cmd: '' });
+    }
+    for (const b of sel) {
+      for (const why of arr(b.migration_needed)) items.push({ tone: 'fix', tag: 'Migrate', title: `${ctx.multi ? `${bpName(b)}: ` : ''}${why}`, detail: '', cmd: 'blueprint.py migrate' });
+      const n = obj(b.next), cmd = String(n.command || '');
+      if (cmd && cmd !== 'wait') {
+        const fix = cmd === 'bootstrap' || cmd === 'migrate';
+        const hit = n.epic ? epicsOf(b).find(e => e.id === n.epic) : null;
+        const unlocks = hit ? arr(ctx.unlocks.get(keyOf(b, hit))).length : 0;
+        items.push({ tone: fix ? 'fix' : 'next', tag: fix ? 'Fix first' : 'Next', cmd: nextCommand(b, n),
+          title: hit ? `${refOf(b, hit)} ${hit.title || ''}` : `${ctx.multi ? `${bpName(b)}: ` : ''}${fix ? `run ${cmd}` : cap(cmd)}`,
+          detail: `${n.why || ''}${unlocks && !/wait/.test(String(n.why || '')) ? ` It unlocks ${plural(unlocks, 'epic')}.` : ''}${n.effort ? ` Runs at effort ${n.effort}.` : ''}` });
+      } else if (cmd === 'wait') {
+        items.push({ tone: 'check', tag: 'Waiting', title: `${ctx.multi ? `${bpName(b)}: ` : ''}nothing can start here`, detail: n.why || '', cmd: '' });
+      }
+      const nextEpic = n.epic || null;
+      for (const e of epicsOf(b)) {
+        if (e.state === 'implemented' && e.id !== nextEpic) items.push({ tone: 'next', tag: 'Review', title: `${refOf(b, e)} ${e.title || ''}`, detail: arr(e.review_missing).length ? `The review has no evidence for ${e.review_missing.slice(0, 4).join(', ')}.` : 'Every task is checked.', cmd: '/speckit-blueprint-review' });
+        if (e.state === 'stale' && e.id !== nextEpic) items.push({ tone: 'fix', tag: 'Recompile', title: `${refOf(b, e)} ${e.title || ''}`, detail: `The blueprint changed after it was compiled${num(obj(e.actual).sessions) ? `; ${dur(obj(e.actual).agent_s)} of work is recorded on it` : ''}.`, cmd: `/speckit-blueprint-compile ${ctx.multi ? `${b.id}:` : ''}${e.id}` });
+      }
+      // epics nothing blocks, beside the next one: candidates for a second worktree
+      const planned = sprintsOf(b).length > 0;
+      const ready = ordered(b).filter(e => e.state === 'not-compiled' && !arr(e.blocked_by).length && !e.elsewhere && !e.started && e.id !== nextEpic && (!planned || e.sprint));
+      if (ready.length) {
+        items.push({ tone: 'ready', tag: 'Also ready', title: `${ready.slice(0, 4).map(e => `${refOf(b, e)} ${e.title || ''}`).join(' · ')}${ready.length > 4 ? ` and ${ready.length - 4} more` : ''}`,
+          detail: 'Nothing blocks these; each can be built in its own worktree beside the next epic.', cmd: `blueprint.py workspace ${ctx.multi ? `${b.id}:` : ''}${ready[0].id} --create` });
+      }
+      const outside = planned ? epicsOf(b).filter(e => !e.sprint && e.state !== 'done') : [];
+      if (outside.length) {
+        items.push({ tone: 'check', tag: 'Check', title: outside.map(e => `${refOf(b, e)} ${e.title || ''}`).join(' · '),
+          detail: `In no sprint of the delivery plan, yet counted as remaining work (${plural(sum(outside, e => e.acs), 'AC')}).`, cmd: '' });
+      }
+    }
+    if (!items.length) return '';
+    const order = { wait: 0, fix: 1, next: 2, ready: 3, check: 4 };
+    items.sort((a, b) => order[a.tone] - order[b.tone]);
+    const urgent = items.filter(i => i.tone === 'wait' || i.tone === 'fix').length;
+    return html`<div class="card-h"><h2>Needs you</h2>${urgent ? html`<span class="count">${urgent}</span>` : ''}<span class="lede">Answers, fixes and the next commands, most urgent first</span></div>
+      <ul class="needs">${items.map(i => html`<li class="nd t-${i.tone}"><span class="nd-tag"><i></i>${i.tag}</span><div class="nd-main"><strong>${i.title}</strong>${i.detail ? html`<span class="meta">${i.detail}</span>` : ''}</div><div class="nd-cmd">${i.cmd ? html`<code>${i.cmd}</code>` : ''}</div></li>`)}</ul>`;
+  }
+
+  // ---------- the four figures ----------
   function mergeRemaining(list) {
     const add = k => [0, 1].map(i => sum(list, r => arr(r[k])[i]));
     const latest = i => list.map(r => arr(r.finish)[i]).filter(Boolean).sort().pop();
@@ -330,11 +629,15 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const epics = sel.flatMap(epicsOf), acts = epics.map(e => obj(e.actual));
     const acs = sum(sel, b => (isNum(b.acs_total) ? b.acs_total : sum(epicsOf(b), e => e.acs)));
     const acsDone = sum(sel, b => (isNum(b.acs_done) ? b.acs_done : sum(epicsOf(b).filter(e => e.state === 'done'), e => e.acs)));
-    const pct = acs ? Math.round((100 * acsDone) / acs) : 0;
+    const p = pct(acsDone, acs);
     const firsts = acts.map(a => ts(a.first)).filter(isNum);
-    const progress = card('Progress', `${pct}%`, [
-      html`<span class="meter" role="img" aria-label="${pct}% of acceptance criteria done"><i style="width:${pct}%"></i></span>`,
+    const cur = sel.length === 1 ? currentSprint(sel[0]) : null, nums = sel.length === 1 ? numbered(sel[0]) : [];
+    const where = cur ? `Now in ${sprintName(cur)}${nums.length && cur.label !== null && /^\d+$/.test(cur.label) ? ` of ${nums.length}` : ''} · ${cur.milestone}`
+      : sel.length > 1 ? join(sel.map(b => { const c = currentSprint(b); return c ? `${bpShort(b)} ${sprintId(c)}` : ''; }), ' · ') : '';
+    const progress = card('Progress', `${p}%`, [
+      html`<span class="meter" role="img" aria-label="${p}% of acceptance criteria done"><i style="width:${p}%"></i></span>`,
       `${acsDone} of ${acs} ACs · ${epics.filter(e => e.state === 'done').length} of ${plural(epics.length, 'epic')}`,
+      where && where.s !== '' ? (sel.length > 1 ? html`Sprints now: ${where}` : where) : '',
       firsts.length ? `Started ${fdate(Math.min(...firsts))}` : '',
     ]);
     const off = st.metrics === 'off';
@@ -342,9 +645,11 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const worked = acts.concat(disc).filter(a => num(a.sessions) > 0), priced = worked.filter(a => isNum(a.cost_usd));
     const estimated = priced.length > 0 && (priced.length < worked.length || priced.some(a => a.cost_estimated));
     const spentCost = priced.length ? money(sum(priced, a => a.cost_usd), estimated) : worked.length ? 'Cost unknown' : '—';
-    const spent = off ? card('Spent', '—', ['Metrics are off']) : card('Spent', spentCost, [
-      `${dur(sum(acts, a => a.agent_s) + sum(disc, d => d.agent_s))} agent time · ${tok(sum(acts, a => a.tokens) + sum(disc, d => d.tokens))} tokens`,
-      estimated ? '+ part of it is estimated or not recorded yet' : worked.length && !priced.length ? 'Claude Code records a session’s cost when the session ends' : '',
+    const agent = sum(acts, a => a.agent_s) + sum(disc, d => d.agent_s), waited = sum(acts, a => a.wait_s) + sum(disc, d => d.wait_s);
+    const spent = off ? card('Spent', '—', ['Metrics are off']) : !worked.length ? card('Spent', '—', ['No recorded sessions yet']) : card('Spent', spentCost, [
+      `${dur(agent)} agent time · ${tok(sum(acts, a => a.tokens) + sum(disc, d => d.tokens))} tokens`,
+      waited > 0 ? `Sessions waited ${cal(waited)} for you` : '',
+      estimated ? 'Part of it is estimated or not recorded yet' : worked.length && !priced.length ? 'Claude Code records a session’s cost when the session ends' : '',
     ]);
     const rems = built.map(b => b.remaining).filter(r => r && typeof r === 'object');
     const rem = rems.length > 1 ? mergeRemaining(rems) : rems[0] || null;
@@ -359,11 +664,124 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const k = Math.max(1, Math.round(num(rem.parallelism)));
     return [progress, spent,
       isNum(arr(rem.cost_usd)[0])
-        ? card('Remaining P50 – P90', range(rem.cost_usd, money), [`${range(rem.agent_s, dur)} agent time`, `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`])
+        ? card('Remaining P50 – P90', html`<span title="${range(rem.cost_usd, money)}">${range(rem.cost_usd, roughMoney)}</span>`, [`${range(rem.agent_s, dur)} agent time`, `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`])
         : card('Remaining P50 – P90', range(rem.agent_s, dur), ['Agent time · cost unknown: no finished epic has a recorded cost', `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`]),
       card('Forecast finish', range(arr(rem.finish).map(ts), fdate), [`${plural(num(rem.epics), 'epic')} left · ${plural(k, 'epic')} at a time${rems.length > 1 ? ' per blueprint' : ''}`,
         isNum(arr(rem.calendar_s)[0]) ? `${range(rem.calendar_s, cal)} of calendar time` : '']),
     ];
+  }
+
+  // ---------- state of an epic: [class, label, note] ----------
+  function stateOf(e) {
+    const s = e.state, w = obj(e.elsewhere);
+    if (s === 'done') {
+      const open = num(e.tasks_total) - num(e.tasks_done);
+      return ['done', 'Done', open > 0 ? `${plural(open, 'task')} unchecked` : ''];
+    }
+    if (e.elsewhere && typeof e.elsewhere === 'object') return ['elsewhere', 'Building', `in ${base(w.worktree) || 'another worktree'}`];
+    const sv = obj(e.started);
+    if (e.started && typeof e.started === 'object') return sv.merged_into
+      ? ['elsewhere', 'Merged', `in ${sv.merged_into}; bring it in`]
+      : sv.local ? ['elsewhere', 'On a branch', `${sv.branch || ''}`] : ['elsewhere', 'Pushed', `on ${sv.remote || 'a remote branch'}`];
+    if (s === 'in-progress') return ['building', 'Building', ''];
+    if (s === 'implemented') return ['review', 'Review', arr(e.review_missing).length ? 'evidence missing' : 'every task checked'];
+    if (s === 'stale') return ['stale', 'Stale', 'recompile'];
+    if (arr(e.blocked_by).length) return ['blocked', 'Blocked', ''];
+    return ['ready', 'Ready', s === 'tasked' ? 'tasks written' : s === 'compiled' ? 'compiled' : ''];
+  }
+  const STATES = [['done', 'Done'], ['building', 'Building'], ['review', 'Review'], ['ready', 'Ready'], ['blocked', 'Blocked'], ['stale', 'Stale']];
+
+  function epicTip(b, e) {
+    const [, label, note] = stateOf(e), est = obj(e.estimate), a = obj(e.actual);
+    const lines = [`${refOf(b, e)} ${e.title || ''}`, `${label}${note ? ` (${note})` : ''} · ${plural(num(e.acs), 'AC')} · ${plural(arr(e.stories).length, 'story', 'stories')}${e.size ? ` · size ${e.size}` : ''}`];
+    if (num(e.tasks_total)) lines.push(`Tasks ${num(e.tasks_done)}/${e.tasks_total}`);
+    if (num(a.agent_s)) lines.push(`Worked ${dur(a.agent_s)} · ${costOf(a.cost_usd, a.cost_estimated, a.sessions)}`);
+    if (e.state !== 'done' && isNum(arr(est.agent_s)[0])) lines.push(`Estimate ${range(est.agent_s, dur)}${isNum(arr(est.cost_usd)[0]) ? ` · ${range(est.cost_usd, money)}` : ''}`);
+    if (arr(e.blocked_by).length && e.state !== 'done') lines.push(`Waits for ${e.blocked_by.join(', ')}`);
+    if (e.critical) lines.push('On the critical path');
+    return lines.join('\n');
+  }
+
+  // ---------- sprints ----------
+  function blockW(e, max) { return Math.max(0.6, (100 * num(e.acs)) / Math.max(1, max)); }
+
+  function segbar(b, s, max, trackW) {
+    const label = `${sprintName(s)}: ${s.epics.map(e => `${e.id} ${stateOf(e)[1]}, ${plural(num(e.acs), 'AC')}`).join('; ')}`;
+    return html`<div class="segbar" role="img" aria-label="${label}">${s.epics.map(e => {
+      const w = blockW(e, max), cls = stateOf(e)[0], fits = (w / 100) * trackW >= 34;
+      return html`<span class="blk st-${cls}" style="flex-basis:${w.toFixed(2)}%" data-tip="${epicTip(b, e)}">${fits ? e.id : ''}</span>`;
+    })}</div>`;
+  }
+
+  function sprintRow(b, s, max, trackW) {
+    const status = s.status === 'done' ? html`<span class="pill p-done">Done</span>` : s.status === 'current' ? html`<span class="pill p-current">Current</span>`
+      : s.status === 'started' ? html`<span class="pill">Started</span>` : '';
+    const early = s.early.map(x => `${x.e.id} starts here${x.note ? ` (${x.note})` : ''}`);
+    const est = s.est;
+    let when, whenSub;
+    if (s.done) { when = s.last ? html`Done <b>${fdate(s.last)}</b>` : 'Done'; whenSub = s.cost !== null ? `${money(s.cost, s.costEstimated)} · ${dur(s.agent)}` : s.agent ? dur(s.agent) : ''; }
+    else if (est && arr(est.finish).length) {
+      when = html`<b>${range(arr(est.finish).map(ts), fdate)}</b>`;
+      whenSub = isNum(arr(est.cost_usd)[0]) ? `est. ${rough(est.cost_usd, roughMoney)} more` : isNum(arr(est.agent_s)[0]) ? `est. ${rough(est.agent_s, roughDur)} more` : '';
+    } else { when = html`<span class="muted">No forecast</span>`; whenSub = ''; }
+    const tip = [`${sprintName(s)} · ${s.milestone}`, s.exit ? `Exit criteria: ${s.exit}` : '', s.cost !== null ? `Spent ${money(s.cost, s.costEstimated)} · ${dur(s.agent)} agent time` : '',
+      s.first ? `Worked ${fstamp(s.first)} – ${fstamp(s.last)}` : ''].filter(Boolean).join('\n');
+    return html`<div class="sp s-${s.status}">
+      <div class="sp-name" data-tip="${tip}"><div class="sp-top"><span class="sp-id">${sprintId(s)}</span>${status}</div><span class="sp-ms">${s.milestone || sprintName(s)}</span></div>
+      <div class="sp-plan">${s.epics.length ? segbar(b, s, max, trackW) : html`<span class="muted">No epics</span>`}${!s.done && (s.exit || early.length) ? html`<div class="sp-exit">${s.exit ? html`<b>Exit</b> ${s.exit}` : ''}${early.length ? html`${s.exit ? ' · ' : ''}${early.join(' · ')}` : ''}</div>` : ''}</div>
+      <div class="sp-fig"><b>${s.acsDone}</b> / ${s.acs} ACs<span class="meta">${s.nDone} of ${plural(s.n, 'epic')} done</span></div>
+      <div class="sp-when">${when}${whenSub ? html`<span class="meta">${whenSub}</span>` : ''}</div>
+    </div>`;
+  }
+
+  // Several blueprints on one page: each is a folded group whose summary shows its sprints as a ribbon
+  const wrapped = () => ctx.multi && ui.bp === 'all';
+  const groupOpen = (key, fallback) => (ui.groups.has(key) ? ui.groups.get(key) : fallback);
+
+  function ribbon(b) {
+    const list = sprintsOf(b).filter(s => s.acs > 0);
+    if (!list.length) return '';
+    return html`<span class="ribbon" role="img" aria-label="${list.map(s => `${sprintId(s)} ${s.acsDone} of ${s.acs} ACs`).join(', ')}">${list.map(s =>
+      html`<span class="rb${s.status === 'current' ? ' rb-cur' : ''}" style="flex-grow:${s.acs}" data-tip="${sprintName(s)} · ${s.milestone}\n${s.acsDone} of ${s.acs} ACs done${s.status === 'current' ? ' · current' : ''}"><i style="width:${pct(s.acsDone, s.acs)}%"></i></span>`)}</span>`;
+  }
+
+  function bpSummary(b, extra) { // chevron · name over its status · sprint ribbon · progress and finish: the same columns on every row
+    const eps = epicsOf(b), acs = sum(eps, e => e.acs), acsDone = sum(eps.filter(e => e.state === 'done'), e => e.acs);
+    const list = sprintsOf(b), cur = currentSprint(b), fin = arr(obj(b.remaining).finish).filter(Boolean);
+    const status = [list.length
+      ? `${list.filter(s => s.done).length} of ${plural(list.filter(s => s.label !== null).length, 'sprint')} done${cur ? ` · now ${sprintId(cur)} ${cur.milestone}` : ''}`
+      : `${eps.filter(e => e.state === 'done').length} of ${plural(eps.length, 'epic')} done`, extra || ''].filter(Boolean).join(' · ');
+    return html`<span class="chev" aria-hidden="true"></span><span class="bpg-name"><span class="bpg-t">${bpName(b)}</span><span class="bpg-s">${status}</span></span>${ribbon(b) || html`<span></span>`}<span class="bpg-m"><b>${pct(acsDone, acs)}%</b>${fin.length ? ` · finish ${range(fin.map(ts), fdate)}` : ''}</span>`;
+  }
+
+  function doneFold(b, done, max, trackW) {
+    const key = `spd:${b.id}`, all = sprintsOf(b);
+    const idx = done.map(s => all.indexOf(s)), runs = idx.every((v, i) => !i || v === idx[i - 1] + 1);
+    const ids = done.map(sprintId), label = runs && ids.length > 2 ? `${ids[0]}–${ids[ids.length - 1]}` : ids.join(', ');
+    const priced = done.filter(s => s.cost !== null), firsts = done.map(s => s.first).filter(isNum), lasts = done.map(s => s.last).filter(isNum);
+    const meta = [`${sum(done, s => s.acs)} ACs`, priced.length ? money(sum(priced, s => s.cost), priced.some(s => s.costEstimated)) : '',
+      firsts.length ? `${fdate(Math.min(...firsts))} – ${fdate(Math.max(...lasts))}` : ''].filter(Boolean).join(' · ');
+    return html`<details class="sp-fold" data-group="${key}"${groupOpen(key, false) ? OPEN : ''}><summary class="flat" id="${domId('spd', key)}"><span class="chev" aria-hidden="true"></span><span class="fold-t"><span class="pill p-done">Done</span>${label} · ${plural(done.length, 'sprint')} finished</span><span class="fold-m">${meta}</span></summary>${done.map(s => sprintRow(b, s, max, trackW))}</details>`;
+  }
+
+  function sprints(st) {
+    const sel = selected(st).filter(b => sprintsOf(b).length);
+    if (!sel.length) return '';
+    const max = Math.max(1, ...sel.flatMap(b => sprintsOf(b).map(s => s.acs)));
+    const trackW = window.innerWidth <= 860 ? chartWidth() : Math.max(160, chartWidth() - 236 - 112 - 156 - 54); // stacked rows give the bar the whole width
+    const legend = html`<div class="legend">${STATES.map(([c, l]) => html`<span class="lg st-${c}"><i></i>${l}</span>`)}</div>`;
+    const body = b => {
+      const list = sprintsOf(b), done = list.filter(s => s.done), open = list.filter(s => !s.done);
+      return html`<div class="sp-head" aria-hidden="true"><span>Sprint · milestone</span><span>Epics, sized by acceptance criteria</span><span>Done</span><span>Finish (P50 – P90)</span></div>
+        ${done.length ? doneFold(b, done, max, trackW) : ''}${open.map(s => sprintRow(b, s, max, trackW))}${open.length ? '' : html`<p class="empty">Every sprint is done.</p>`}`;
+    };
+    const group = b => {
+      if (!wrapped()) return html`<div class="sp-group">${body(b)}</div>`;
+      const key = `spb:${b.id}`;
+      return html`<details class="bpg" data-group="${key}"${groupOpen(key, false) ? OPEN : ''}><summary class="flat" id="${domId('bpg', key)}">${bpSummary(b)}</summary><div class="bpg-body">${body(b)}</div></details>`;
+    };
+    return html`<div class="card-h"><h2>Sprints</h2><span class="lede">${wrapped() ? 'One row per blueprint; open one to see its sprints' : 'From the delivery plan; each block is an epic, as wide as its acceptance criteria'}</span></div>
+      <div style="margin:0 0 10px">${legend}</div>${sel.map(group)}`;
   }
 
   // ---------- live sessions ----------
@@ -386,77 +804,101 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   function sessions(st) {
     const rows = arr(st.sessions).filter(s => s && typeof s === 'object' && inBp(s.epic));
+    if (!rows.length) return '';
     const row = s => {
       const waiting = s.kind === 'waiting', hit = ctx.index.get(s.epic);
-      const epic = s.epic ? html`<strong>${epicRef(s.epic)}</strong>${hit && hit.e.title ? html` <span class="muted">${hit.e.title}</span>` : ''}` : html`<span class="muted">${s.feature ? base(s.feature) : 'No epic'}</span>`;
+      const epic = s.epic ? html`<strong>${epicRef(s.epic)}</strong>${hit && hit.e.title ? html` <span class="muted">${hit.e.title}</span>` : ''}${s.story ? html` <span class="muted">· ${s.story}</span>` : ''}` : html`<span class="muted">${s.feature ? base(s.feature) : 'No epic'}</span>`;
       return html`<tr><td class="nowrap"><span class="dot ${waiting ? 'waiting' : 'working'}"></span>${waiting ? 'Waiting' : 'Working'}</td><td>${epic}</td>
         <td title="${s.worktree || ''}">${base(s.worktree) || '—'}</td><td>${activity(s)}</td><td>${s.model || '—'}${s.effort ? html` <span class="muted">· ${s.effort}</span>` : ''}</td></tr>`;
     };
-    const body = rows.length
-      ? html`<div class="scroll"><table><thead><tr><th>Status</th><th>Epic</th><th>Worktree</th><th>Activity</th><th>Model · effort</th></tr></thead><tbody>${rows.map(row)}</tbody></table></div>`
-      : html`<p class="empty">No live sessions. A session counts as live while its transcript keeps being written (the last 15 minutes).</p>`;
-    return html`<h2>Active sessions${rows.length ? html`<span class="count">${rows.length}</span>` : ''}</h2>${body}`;
+    return html`<div class="card-h"><h2>Active sessions</h2><span class="count">${rows.length}</span><span class="lede">Live while their transcript keeps being written (the last 15 minutes)</span></div>
+      <div class="scroll"><table><thead><tr><th>Status</th><th>Epic</th><th>Worktree</th><th>Activity</th><th>Model · effort</th></tr></thead><tbody>${rows.map(row)}</tbody></table></div>`;
   }
 
-  // ---------- epics ----------
-  function stateOf(e) {
-    const s = e.state, w = obj(e.elsewhere);
-    if (s === 'done') return ['done', 'Done', ''];
-    if (e.elsewhere && typeof e.elsewhere === 'object') return ['elsewhere', `Building in ${base(w.worktree) || 'another worktree'}`, w.state ? `there: ${String(w.state).replace('-', ' ')}` : ''];
-    const sv = obj(e.started);
-    if (e.started && typeof e.started === 'object') return sv.merged_into
-      ? ['elsewhere', 'Merged', `in ${sv.merged_into}; bring it in`]
-      : sv.local ? ['elsewhere', 'On a branch', `${sv.branch || ''}`] : ['elsewhere', 'Pushed', `on ${sv.remote || 'a remote branch'}`];
-    if (s === 'in-progress') return ['building', 'Building', ''];
-    if (s === 'implemented') return ['implemented', 'Implemented', arr(e.review_missing).length ? 'review incomplete' : 'awaiting review'];
-    if (arr(e.blocked_by).length) return ['blocked', 'Blocked', s ? String(s).replace('-', ' ') : ''];
-    if (s === 'stale') return ['stale', 'Stale', 'blueprint changed since compile'];
-    return ['planned', 'Planned', s ? String(s).replace('-', ' ') : ''];
-  }
-
-  function nextStep(n) {
+  // ---------- epics, grouped by sprint ----------
+  function nextStep(b, n) {
     n = obj(n);
     if (!n.command) return '';
     const cmd = String(n.command);
     if (cmd === 'wait') return html`<span class="next">Waiting: ${n.why || 'every remaining epic is blocked or in progress elsewhere.'}</span>`;
-    const label = cmd === 'bootstrap' || cmd === 'migrate' ? `blueprint.py ${cmd}` : `/${cmd}`;
-    return html`<span class="next">Next: <code title="${n.run || ''}">${label}</code>${n.epic ? ` ${n.epic}` : ''}${n.why ? ` — ${n.why}` : ''}${n.effort ? html` <span class="muted">(runs at effort ${n.effort})</span>` : ''}</span>`;
+    return html`<span class="next">Next: <code title="${n.run || ''}">${nextCommand(b, n)}</code></span>`;
   }
+
+  const sprintKey = (b, s) => `sg:${b.id}:${s.label === null ? '-' : s.label}`;
 
   function epicsSection(st) {
     const sel = selected(st);
-    const group = b => {
-      const list = epicsOf(b), named = ctx.multi;
-      const head = html`<div class="bphead">${named ? html`<strong>${bpName(b)}</strong>` : ''}${list.length ? html`<span class="muted">${list.filter(e => e.state === 'done').length} of ${plural(list.length, 'epic')} done</span>` : ''}${b.state === 'no-blueprint' ? '' : nextStep(b.next)}</div>`;
-      if (b.state === 'no-blueprint') return html`<div class="ep-group">${head}<p class="empty">No blueprint yet — run discovery: <code>/speckit-blueprint-discover</code>${b.blueprint ? html` (it writes <code>${b.blueprint}</code>)` : ''}.</p></div>`;
-      if (!list.length) return html`<div class="ep-group">${head}<p class="empty">The blueprint has no epics yet.</p></div>`;
-      return html`<div class="ep-group">${head}<div class="ep-cols" aria-hidden="true"><span>Epic</span><span>State</span><span>Tasks</span><span class="num">Agent time</span><span class="num">Cost</span></div>${list.map(e => epicRow(b, e))}</div>`;
+    const maxAcs = Math.max(1, ...sel.flatMap(b => epicsOf(b).map(e => num(e.acs))));
+    const cols = indent => html`<div class="ep-cols${indent ? ' indent' : ''}" aria-hidden="true"><span>Epic</span><span>Size</span><span>State</span><span>Tasks</span><span class="num">Agent time</span><span class="num">Cost</span></div>`;
+    const sprintGroup = (b, s) => {
+      const key = sprintKey(b, s), open = groupOpen(key, !s.done);
+      const status = s.status === 'done' ? html`<span class="pill p-done">Done</span>` : s.status === 'current' ? html`<span class="pill p-current">Current</span>` : '';
+      const fin = s.done ? (s.last ? `done ${fdate(s.last)}` : 'done') : s.est && arr(s.est.finish).length ? `finish ${range(arr(s.est.finish).map(ts), fdate)}` : '';
+      return html`<details class="sg s-${s.status}" data-group="${key}"${open ? OPEN : ''}><summary class="flat" id="${domId('sg', key)}"><span class="chev" aria-hidden="true"></span><span class="sp-chip">${sprintId(s)}</span><span class="sg-title">${s.milestone || sprintName(s)}</span>${status}<span class="sg-meter" role="img" aria-label="${s.acsDone} of ${s.acs} ACs done"><i style="width:${pct(s.acsDone, s.acs)}%"></i></span><span class="sg-m">${s.acsDone} / ${s.acs} ACs · ${s.nDone} of ${plural(s.n, 'epic')} done${fin ? ` · ${fin}` : ''}</span></summary>
+        <div class="sg-body">${s.epics.map(e => epicRow(b, e, maxAcs))}</div></details>`;
     };
-    return html`<h2>Epics</h2>${sel.length ? sel.map(group) : html`<p class="empty">No blueprints are configured.</p>`}`;
+    const body = b => {
+      const list = epicsOf(b);
+      if (b.state === 'no-blueprint') return html`<p class="empty">No blueprint yet — run discovery: <code>/speckit-blueprint-discover</code>${b.blueprint ? html` (it writes <code>${b.blueprint}</code>)` : ''}.</p>`;
+      if (!list.length) return html`<p class="empty">The blueprint has no epics yet.</p>`;
+      const sps = sprintsOf(b);
+      const head = html`<div class="bphead">${wrapped() ? '' : html`<span class="muted">${list.filter(e => e.state === 'done').length} of ${plural(list.length, 'epic')} done</span>`}${nextStep(b, b.next)}${sps.length ? html`<span class="tools"><button type="button" class="tool" data-fold="open" data-of="${b.id}">Open all sprints</button><button type="button" class="tool" data-fold="close" data-of="${b.id}">Close all</button></span>` : ''}</div>`;
+      if (!sps.length) return html`${head}${cols(false)}${ordered(b).map(e => epicRow(b, e, maxAcs))}`;
+      return html`${head}${cols(true)}${sps.map(s => sprintGroup(b, s))}`;
+    };
+    const group = b => {
+      if (!wrapped()) return html`<div class="ep-group">${body(b)}</div>`;
+      const key = `epb:${b.id}`, list = epicsOf(b);
+      const working = list.filter(e => isWorking(e)).length;
+      return html`<details class="bpg" data-group="${key}"${groupOpen(key, false) ? OPEN : ''}><summary class="flat" id="${domId('epb', key)}">${bpSummary(b, working ? `${working} epic${working === 1 ? '' : 's'} in progress` : '')}</summary><div class="bpg-body">${body(b)}</div></details>`;
+    };
+    const bySprint = sel.some(b => sprintsOf(b).length);
+    return html`<div class="card-h"><h2>Epics</h2><span class="lede">${wrapped() ? 'One row per blueprint; open one to see its sprints and epics' : `${bySprint ? 'By sprint, in' : 'In'} the plan’s order; size bars share one scale of acceptance criteria`}</span></div>${sel.length ? sel.map(group) : html`<p class="empty">No blueprints are configured.</p>`}`;
   }
 
-  function epicRow(b, e) {
+  function epicRow(b, e, maxAcs) {
     const key = keyOf(b, e), a = obj(e.actual), est = obj(e.estimate);
     const [cls, label, note] = stateOf(e);
-    const meta = join([arr(e.depends).length ? `Depends on ${e.depends.join(', ')}` : '', e.branch ? html`branch <code>${e.branch}</code>` : ''], ' · ');
-    const blocked = arr(e.blocked_by).length && e.state !== 'done' ? html`<span class="warnline">Waits for ${e.blocked_by.join(', ')}</span>` : '';
+    const unlocks = arr(ctx.unlocks.get(key));
+    const tags = [];
+    if (e.critical) tags.push(html`<span class="tag-cp" title="On the critical path of the delivery plan">critical path</span>`);
+    if (unlocks.length && e.state !== 'done') tags.push(html`<span title="${unlocks.map(x => `${x.id} ${x.title || ''}`).join('\n')}">unlocks ${unlocks.length}</span>`);
+    if (arr(e.blocked_by).length && e.state !== 'done') tags.push(html`<span class="warnline">Waits for ${e.blocked_by.join(', ')}</span>`);
     const total = num(e.tasks_total), done = num(e.tasks_done);
     const tasks = total
-      ? html`<span class="bar" role="img" aria-label="${done} of ${total} tasks done"><i style="width:${Math.round((100 * done) / total)}%"></i></span><span class="frac">${done}/${total}</span>`
-      : html`<span class="muted">No tasks yet</span>`;
-    const estA = isNum(arr(est.agent_s)[0]) ? `est. ${range(est.agent_s, dur)}` : '';
-    const estC = isNum(arr(est.cost_usd)[0]) ? `est. ${range(est.cost_usd, money)}` : '';
+      ? html`<span class="bar" role="img" aria-label="${done} of ${total} tasks done"><i style="width:${pct(done, total)}%"></i></span><span class="frac">${done}/${total}</span>`
+      : html`<span class="muted">${e.state === 'done' ? '—' : e.state === 'not-compiled' ? 'not compiled' : 'no tasks yet'}</span>`;
+    const stories = arr(e.stories).length;
+    const size = html`<span class="sz" title="${e.size ? `Size ${e.size} in the delivery plan` : 'No size in the delivery plan'}">${e.size || '–'}</span><span class="sbar" role="img" aria-label="${num(e.acs)} acceptance criteria"><i style="width:${Math.max(3, pct(num(e.acs), maxAcs))}%"></i></span><span class="frac" title="${plural(num(e.acs), 'acceptance criterion', 'acceptance criteria')} in ${plural(stories, 'story', 'stories')}">${num(e.acs)}</span>`;
+    const open = e.state !== 'done';
+    const estA = open && isNum(arr(est.agent_s)[0]) ? html`<span class="meta" title="${range(est.agent_s, dur)}">est. ${rough(est.agent_s, roughDur)}</span>` : '';
+    const estC = open && isNum(arr(est.cost_usd)[0]) ? html`<span class="meta" title="${range(est.cost_usd, money)}">est. ${rough(est.cost_usd, roughMoney)}</span>` : '';
     return html`<details class="epic" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('ep', key)}">
-      <span class="c-title"><span class="eid">${e.id || '?'}</span>${e.title || ''}${meta.s ? html`<span class="meta">${meta}</span>` : ''}${blocked}</span>
-      <span class="c-state" data-label="State"><span class="badge b-${cls}" title="${label} (state: ${e.state || 'unknown'})"><i></i>${label}</span>${note ? html`<span class="meta">${note}</span>` : ''}</span>
+      <span class="c-title"><span class="eid">${e.id || '?'}</span>${e.title || ''}${tags.length ? html`<span class="tags">${tags}</span>` : ''}</span>
+      <span class="c-size" data-label="Size">${size}</span>
+      <span class="c-state" data-label="State"><span class="badge st-${cls}" title="${label} (state: ${e.state || 'unknown'})"><i></i>${label}</span>${note ? html`<span class="meta">${note}</span>` : ''}</span>
       <span class="c-tasks" data-label="Tasks">${tasks}</span>
-      <span class="c-num" data-label="Agent time">${num(a.agent_s) > 0 ? dur(a.agent_s) : '—'}${estA ? html`<span class="meta">${estA}</span>` : ''}</span>
-      <span class="c-num" data-label="Cost">${costOf(a.cost_usd, a.cost_estimated, a.sessions)}${estC ? html`<span class="meta">${estC}</span>` : ''}</span>
-    </summary><div class="epic-body">${epicBody(e)}</div></details>`;
+      <span class="c-num" data-label="Agent time">${num(a.agent_s) > 0 ? dur(a.agent_s) : '—'}${estA}</span>
+      <span class="c-num" data-label="Cost">${costOf(a.cost_usd, a.cost_estimated, a.sessions)}${estC}</span>
+    </summary><div class="epic-body">${epicBody(b, e)}</div></details>`;
   }
 
-  function epicBody(e) {
+  function epicBody(b, e) {
     const out = [], w = obj(e.elsewhere), updated = ts(w.updated);
+    const plan = [];
+    if (e.goal) plan.push(['Goal', e.goal]);
+    if (e.why) plan.push(['Why now', e.why]);
+    if (arr(e.depends).length) {
+      plan.push(['Depends on', html`${arr(e.depends).map(d => {
+        const k = String(d).includes(':') ? String(d) : `${b.id}:${d}`, hit = ctx.index.get(k), ok = hit && hit.e.state === 'done';
+        return html`<span class="chip ${ok ? 'c-done' : 'c-open'}" title="${hit ? `${hit.e.title || ''}: ${stateOf(hit.e)[1]}` : 'unknown'}"><i></i>${d}</span>`;
+      })}`]);
+    }
+    const unlocks = arr(ctx.unlocks.get(keyOf(b, e)));
+    if (unlocks.length && e.state !== 'done') plan.push(['Unlocks', unlocks.map(x => `${x.id} ${x.title || ''}`).join(' · ')]);
+    if (e.branch) plan.push(['Branch', html`<code>${e.branch}</code>`]);
+    if (e.feature) plan.push(['Feature', html`<code>${e.feature}</code>`]);
+    if (plan.length) out.push(html`<dl class="plan-dl">${plan.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`);
     if (e.elsewhere && typeof e.elsewhere === 'object') {
       out.push(html`<p class="note">Claimed on the board by another worktree: <code>${w.worktree || '?'}</code>${w.branch ? html` on <code>${w.branch}</code>` : ''}${w.state ? ` · ${w.state}` : ''}${num(w.tasks_total) ? ` · tasks ${num(w.tasks_done)}/${w.tasks_total}` : ''}${updated ? ` · updated ${fstamp(updated)}` : ''}</p>`);
     } else if (e.started && typeof e.started === 'object') {
@@ -535,7 +977,8 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const repoTime = Object.entries(obj(a.repos)).map(([k, v]) => [k, num(obj(v).tool_s), num(obj(v).calls)]).sort(byDesc).map(([k, s, n]) => `${k} ${dur(s)} (${plural(n, 'call')})`);
     const items = [['Model time', dur(a.model_s)], ['Tool time', dur(a.tool_s)], ['Waited for you', dur(a.wait_s)],
       ['Human gates', isNum(a.gates) ? a.gates : ''], ['Sessions', isNum(a.sessions) ? a.sessions : ''], ['Calendar', isNum(a.calendar_s) ? cal(a.calendar_s) : ''],
-      ['Tokens', isNum(a.tokens) ? tok(a.tokens) : ''], ['Phases', Object.entries(obj(a.phases)).sort(byDesc).map(([k, v]) => `${k} ${dur(num(v))}`).join(', ')],
+      ['Tokens', isNum(a.tokens) ? tok(a.tokens) : ''], ['Per AC', num(e.acs) && isNum(a.cost_usd) ? `${money(a.cost_usd / e.acs)} · ${dur(num(a.agent_s) / e.acs)}` : ''],
+      ['Phases', Object.entries(obj(a.phases)).sort(byDesc).map(([k, v]) => `${k} ${dur(num(v))}`).join(', ')],
       ['Models', shares(a.models)], ['Effort', shares(a.efforts)], ['Subagents', subs.join(', ')], ['Tool time by repository', repoTime.join(', ')]];
     return html`<dl class="details">${items.filter(([, v]) => v !== '').map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`;
   }
@@ -544,29 +987,33 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   function chartWidth() { // the inner width of a card, measured from the KPI row (always rendered first)
     const k = document.getElementById('kpis');
     const w = k && k.clientWidth ? k.clientWidth - 34 : 0;
-    return Math.max(420, Math.round(w || 900));
+    return Math.max(320, Math.round(w || 900));
   }
   const tableView = (key, head, rows) => html`<details class="tv" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('tv', key)}">Show as a table</summary><div class="scroll"><table><thead><tr>${head.map(h => html`<th>${h}</th>`)}</tr></thead><tbody>${rows.map(r => html`<tr>${r.map(c => html`<td>${c}</td>`)}</tr>`)}</tbody></table></div></details>`;
 
-  function spansOf(e) { // worked stretches as [start, end] in ms, merged
-    const a = obj(e.actual);
-    let sp = arr(a.spans).map(p => [ts(arr(p)[0]), ts(arr(p)[1])]).filter(p => isNum(p[0]) && isNum(p[1]));
-    if (!sp.length && isNum(ts(a.first)) && isNum(ts(a.last))) sp = [[ts(a.first), ts(a.last)]];
+  function mergeSpans(sp) {
     const out = [];
-    for (const [s, x] of sp.sort((p, q) => p[0] - q[0])) {
+    for (const [s, x] of sp.slice().sort((p, q) => p[0] - q[0])) {
       const last = out[out.length - 1];
       if (last && s <= last[1]) last[1] = Math.max(last[1], x); else out.push([s, Math.max(s, x)]);
     }
     return out;
   }
 
-  // Remaining epics on `parallelism` slots in blueprint order, after their dependencies (as estimate.py
-  // schedules them); P50 and P90 are scheduled separately. Length = estimated calendar time minus spent.
+  function spansOf(e) { // worked stretches as [start, end] in ms, merged
+    const a = obj(e.actual);
+    let sp = arr(a.spans).map(p => [ts(arr(p)[0]), ts(arr(p)[1])]).filter(p => isNum(p[0]) && isNum(p[1]));
+    if (!sp.length && isNum(ts(a.first)) && isNum(ts(a.last))) sp = [[ts(a.first), ts(a.last)]];
+    return mergeSpans(sp);
+  }
+
+  // Remaining epics on `parallelism` slots in delivery order, after their dependencies (as estimate.py schedules
+  // them); P50 and P90 are scheduled separately. Length = estimated calendar time minus the time spent.
   function forecast(b, now) {
     const k = Math.max(1, Math.round(num(obj(b.remaining).parallelism)) || 1), out = {};
     [0, 1].forEach(q => {
       const slots = new Array(k).fill(now), fin = {};
-      for (const e of epicsOf(b)) {
+      for (const e of ordered(b)) {
         const est = obj(e.estimate), c = arr(est.calendar_s)[q];
         if (e.state === 'done' || !isNum(c)) continue;
         const len = Math.max(0, c - num(obj(est.spent).calendar_s)) * 1000;
@@ -598,22 +1045,38 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     return { step, list: out.filter((_, i) => i % every === 0) };
   }
 
-  function timeline(st) {
-    const sel = selected(st).filter(b => epicsOf(b).length), now = Math.floor(ctx.now / 60000) * 60000, rows = [];
+  // One row per sprint (its epics' worked time merged, its open epics' forecast joined) and, for one blueprint,
+  // one row per epic of the sprints not done yet. Several blueprints: sprints only.
+  function timelineRows(sel, now) {
+    const rows = [];
     for (const b of sel) {
-      const plan = forecast(b, now);
+      const plan = forecast(b, now), sps = sprintsOf(b);
       if (sel.length > 1) rows.push({ group: bpName(b) });
-      for (const e of epicsOf(b)) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null });
+      if (!sps.length) { for (const e of ordered(b)) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null }); continue; }
+      for (const s of sps) {
+        const fs = s.epics.map(e => plan[e.id]).filter(Boolean);
+        const f = fs.length ? { s50: Math.min(...fs.map(x => x.s50)), e50: Math.max(...fs.map(x => x.e50)), e90: Math.max(...fs.map(x => x.e90)) } : null;
+        rows.push({ b, s, spans: mergeSpans(s.epics.flatMap(spansOf)), f });
+        if (sel.length === 1 && !s.done) for (const e of s.epics) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null, inner: true });
+      }
     }
+    return rows;
+  }
+
+  function timeline(st) {
+    const sel = selected(st).filter(b => epicsOf(b).length), now = Math.floor(ctx.now / 60000) * 60000;
+    const rows = timelineRows(sel, now);
     let lo = Infinity, hi = -Infinity;
     for (const r of rows) {
       for (const [s, x] of r.spans || []) { lo = Math.min(lo, s); hi = Math.max(hi, x); }
       if (r.f) { lo = Math.min(lo, r.f.s50); hi = Math.max(hi, r.f.e90, r.f.e50); }
     }
-    if (!isFinite(lo)) return html`<h2>Timeline</h2><p class="empty">No recorded activity or forecast yet.</p>`;
+    if (!isFinite(lo)) return html`<div class="card-h"><h2>Timeline</h2></div><p class="empty">No recorded activity or forecast yet.</p>`;
     lo = Math.min(lo, now); hi = Math.max(hi, now);
     const padT = Math.max((hi - lo) * 0.02, 5 * 60e3); lo -= padT; hi += padT;
-    const W = chartWidth(), L = Math.min(210, Math.round(W * 0.3)), R = 12, top = 22, rowH = 26, H = top + rows.length * rowH + 24;
+    const W = chartWidth(), L = Math.min(230, Math.round(W * 0.32)), R = 14, top = 22;
+    const rowH = r => (r.group ? 30 : r.s ? 28 : 24);
+    const H = top + rows.reduce((t, r) => t + rowH(r), 0) + 24;
     const x = t => L + ((t - lo) / (hi - lo)) * (W - L - R), f1 = n => n.toFixed(1);
     const tk = ticks(lo, hi, Math.max(2, Math.floor((W - L - R) / 96)));
     let dated = false; // the first label shown carries the date; later ones only at midnight
@@ -624,35 +1087,50 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
       if (fits && lab !== ftime(t)) dated = true;
       return html`<line class="grid" x1="${f1(xx)}" x2="${f1(xx)}" y1="${top - 4}" y2="${H - 24}"/>${fits ? html`<text class="axis" x="${f1(xx)}" y="${H - 8}" text-anchor="middle">${lab}</text>` : ''}`;
     });
-    const table = [];
-    const body = rows.map((r, i) => {
-      const y = top + i * rowH;
-      if (r.group) return html`<text class="grp" x="0" y="${y + 17}">${clip(r.group, Math.floor((L - 8) / 7))}</text>`;
-      const name = `${r.e.id || '?'} ${r.e.title || ''}`.trim(), marks = [], px = [];
+    const table = [], body = [];
+    const diamond = (cx, cy, r, cls) => html`<path class="${cls}" d="M${f1(cx)},${f1(cy - r)}L${f1(cx + r)},${f1(cy)}L${f1(cx)},${f1(cy + r)}L${f1(cx - r)},${f1(cy)}Z"/>`;
+    let y = top;
+    for (const r of rows) {
+      const h = rowH(r);
+      if (r.group) { body.push(html`<text class="grp" x="0" y="${y + 20}">${clip(r.group, Math.floor((L - 8) / 7))}</text>`); y += h; continue; }
+      const sprint = !!r.s, mid = y + h / 2, barH = sprint ? 8 : 12, by = mid - barH / 2;
+      const name = sprint ? `${sprintId(r.s)} ${r.s.milestone || ''}`.trim() : `${r.e.id || '?'} ${r.e.title || ''}`.trim();
+      const marks = [], px = [];
+      if (sprint && r.s.status === 'current') marks.push(html`<rect class="band" x="${L}" y="${y + 2}" width="${f1(W - L - R)}" height="${h - 4}" rx="4"/>`);
       for (const [s, t] of r.spans) { // merge stretches closer than a pixel apart
         const a = x(s), b2 = Math.max(x(t), a + 2), last = px[px.length - 1];
         if (last && a - last[1] < 1.5) last[1] = Math.max(last[1], b2); else px.push([a, b2]);
       }
-      px.forEach(([a, b2]) => marks.push(html`<rect class="act" x="${f1(a)}" y="${y + 7}" width="${f1(b2 - a)}" height="12" rx="2"/>`));
-      const tip = [name];
+      px.forEach(([a, b2]) => marks.push(html`<rect class="act" x="${f1(a)}" y="${f1(by)}" width="${f1(b2 - a)}" height="${barH}" rx="2"/>`));
+      const tip = [sprint ? `${sprintName(r.s)} · ${r.s.milestone || ''}` : name];
       const worked = r.spans.length ? `${fstamp(r.spans[0][0])} – ${fstamp(r.spans[r.spans.length - 1][1])}` : '';
       if (worked) tip.push(`Worked ${worked} (${plural(r.spans.length, 'stretch', 'stretches')} of activity)`);
       if (r.f) {
         const a = x(r.f.s50), m = Math.max(x(r.f.e50), a + 2), z = Math.max(x(r.f.e90), m);
-        if (z > m + 0.5) marks.push(html`<rect class="fc90" x="${f1(m)}" y="${y + 7}" width="${f1(z - m)}" height="12" rx="2"/>`);
-        marks.push(html`<rect class="fc" x="${f1(a)}" y="${y + 7}" width="${f1(m - a)}" height="12" rx="2"/>`);
-        tip.push(`Forecast: starts ${fstamp(r.f.s50)}, done ${fstamp(r.f.e50)} (P50) – ${fstamp(r.f.e90)} (P90)`);
-      } else if (r.e.state === 'done') tip.push('Done');
-      else tip.push('No forecast yet');
-      table.push([name, worked || '—', r.f ? fstamp(r.f.e50) : r.e.state === 'done' ? 'done' : '—', r.f ? fstamp(r.f.e90) : '—']);
-      const t = tip.join('\n');
-      return html`<g class="row" tabindex="0" id="${domId('tl', keyOf(r.b, r.e))}" data-tip="${t}" aria-label="${t}"><rect class="hit" x="0" y="${y}" width="${W}" height="${rowH}"/><text class="lbl" x="0" y="${y + 17}">${clip(name, Math.floor((L - 10) / 6.6))}</text>${marks}</g>`;
-    });
+        if (z > m + 0.5) marks.push(html`<rect class="fc90" x="${f1(m)}" y="${f1(by)}" width="${f1(z - m)}" height="${barH}" rx="2"/>`);
+        marks.push(html`<rect class="fc" x="${f1(a)}" y="${f1(by)}" width="${f1(m - a)}" height="${barH}" rx="2"/>`);
+        if (sprint) marks.push(diamond(m, mid, 6, 'ms-fc'));
+        tip.push(`Forecast: ${sprint ? 'its last epic is ' : 'starts ' + fstamp(r.f.s50) + ', '}done ${fstamp(r.f.e50)} (P50) – ${fstamp(r.f.e90)} (P90)`);
+      } else if (sprint ? r.s.done : r.e.state === 'done') {
+        tip.push('Done');
+        if (sprint && r.s.last) marks.push(diamond(x(r.s.last), mid, 6, 'ms-done'));
+      } else tip.push('No forecast yet');
+      if (sprint) tip.push(`${r.s.nDone} of ${plural(r.s.n, 'epic')} · ${r.s.acsDone} of ${r.s.acs} ACs done`);
+      if (!sprint && r.e.critical) tip.push('On the critical path');
+      const done = sprint ? r.s.done : r.e.state === 'done';
+      table.push([sprint ? html`<strong>${name}</strong>` : name, worked || '—', r.f ? fstamp(r.f.e50) : done ? 'done' : '—', r.f ? fstamp(r.f.e90) : '—']);
+      const t = tip.join('\n'), indent = r.inner ? 14 : 0, maxCh = Math.floor((L - 10 - indent) / (sprint ? 7 : 6.6));
+      const key = sprint ? `${r.b.id}:${r.s.label}` : keyOf(r.b, r.e);
+      body.push(html`<g class="row" tabindex="0" id="${domId(sprint ? 'tls' : 'tl', key)}" data-tip="${t}" aria-label="${t}"><rect class="hit" x="0" y="${y}" width="${W}" height="${h}"/>${r.inner && r.e.critical ? html`<text class="axis" x="2" y="${mid + 4}">◆</text>` : ''}<text class="lbl${sprint ? ' sprint' : ''}" x="${indent}" y="${mid + 4}">${clip(name, maxCh)}</text>${marks}</g>`);
+      y += h;
+    }
     const nx = f1(x(now));
-    return html`<h2>Timeline</h2><div class="legend"><span><i class="sw act"></i>Worked</span><span><i class="sw fc"></i>Forecast (P50)</span><span><i class="sw fc90"></i>Up to P90</span><span><i class="sw line"></i>Now</span></div>
-      <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Timeline of epics: worked time and forecast">${grid}${body}
+    const one = sel.length === 1;
+    return html`<div class="card-h"><h2>Timeline</h2><span class="lede">${one ? 'Sprints with their epics; finished sprints fold into one row' : 'One row per sprint; pick a blueprint to see its epics'}</span></div>
+      <div class="legend" style="margin:0 0 10px"><span><i class="sw act"></i>Worked</span><span><i class="sw fc"></i>Forecast (P50)</span><span><i class="sw fc90"></i>Up to P90</span><span><i class="sw dia" style="background:var(--good)"></i>Sprint done</span><span><i class="sw dia" style="background:var(--s1)"></i>Sprint forecast</span>${one ? html`<span>◆ Critical path</span>` : ''}<span><i class="sw line"></i>Now</span></div>
+      <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Timeline of sprints and epics: worked time and forecast">${grid}${body}
       <line class="now" x1="${nx}" x2="${nx}" y1="${top - 6}" y2="${H - 24}"/><text class="axis" x="${nx}" y="${top - 10}" text-anchor="middle">now</text></svg>
-      ${tableView('tv:timeline', ['Epic', 'Worked', 'Forecast done (P50)', 'Forecast done (P90)'], table)}`;
+      ${tableView('tv:timeline', ['Sprint or epic', 'Worked', 'Forecast done (P50)', 'Forecast done (P90)'], table)}`;
   }
 
   function barPath(x, y, w, h, r) { // square at the baseline, rounded data end
@@ -663,17 +1141,20 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   function breakdown(st) {
     const NAMES = ['Model', 'Tools and tests', 'Waiting for you'], items = [];
-    for (const b of selected(st)) for (const e of epicsOf(b)) {
+    for (const b of selected(st)) for (const e of ordered(b)) {
       const a = obj(e.actual), v = [num(a.model_s), num(a.tool_s), num(a.wait_s)];
       const name = `${ctx.multi ? `${b.id}:` : ''}${e.id || '?'} ${e.title || ''}`.trim();
       if (v[0] + v[1] + v[2] > 0) items.push({ b, e, v, name, total: v[0] + v[1] + v[2] });
     }
-    if (!items.length) return html`<h2>Where the time went</h2><p class="empty">No recorded time yet.</p>`;
-    const W = chartWidth(), L = Math.min(210, Math.round(W * 0.3)), R = 70, rowH = 30, barH = 16, H = items.length * rowH;
+    if (!items.length) return html`<div class="card-h"><h2>Where the time went</h2></div><p class="empty">No recorded time yet.</p>`;
+    const totals = [0, 1, 2].map(k => sum(items, it => it.v[k])), agent = totals[0] + totals[1];
+    const headline = totals[2] > 0 && agent > 0
+      ? html`<p class="headline">Sessions waited <b>${cal(totals[2])}</b> for your answers, ${totals[2] >= agent ? html`<b>${(totals[2] / agent).toFixed(1)}×</b> the agent’s own` : html`against the agent’s`} <b>${dur(agent)}</b> of work.</p>` : '';
+    const W = chartWidth(), L = Math.min(230, Math.round(W * 0.32)), R = 70, rowH = 30, barH = 16, H = items.length * rowH;
     const max = Math.max(...items.map(i => i.total)), sx = v => (v / max) * (W - L - R);
     const rows = items.map((it, i) => {
       const y = i * rowH + (rowH - barH) / 2, last = it.v.map((v, k) => (v > 0 ? k : -1)).filter(k => k >= 0).pop();
-      const name = it.name, segs = [];
+      const segs = [];
       let x0 = L;
       it.v.forEach((v, k) => {
         if (v <= 0) return;
@@ -682,12 +1163,69 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
         if (text.length * 6.6 + 10 <= vis) segs.push(html`<text class="in" x="${(x0 + 5).toFixed(1)}" y="${y + barH - 4}">${text}</text>`);
         x0 += w;
       });
-      const tip = [name, ...NAMES.map((n, k) => `${n}: ${dur(it.v[k])} (${Math.round((100 * it.v[k]) / it.total)}%)`), `Total: ${dur(it.total)}`].join('\n');
-      return html`<g class="row" tabindex="0" id="${domId('tb', keyOf(it.b, it.e))}" data-tip="${tip}" aria-label="${tip}"><rect class="hit" x="0" y="${i * rowH}" width="${W}" height="${rowH}"/><text class="lbl" x="0" y="${y + barH - 4}">${clip(name, Math.floor((L - 10) / 6.6))}</text>${segs}<text class="axis" x="${(x0 + 6).toFixed(1)}" y="${y + barH - 4}">${dur(it.total)}</text></g>`;
+      const tip = [it.name, ...NAMES.map((n, k) => `${n}: ${dur(it.v[k])} (${Math.round((100 * it.v[k]) / it.total)}%)`), `Total: ${dur(it.total)}`].join('\n');
+      return html`<g class="row" tabindex="0" id="${domId('tb', keyOf(it.b, it.e))}" data-tip="${tip}" aria-label="${tip}"><rect class="hit" x="0" y="${i * rowH}" width="${W}" height="${rowH}"/><text class="lbl" x="0" y="${y + barH - 4}">${clip(it.name, Math.floor((L - 10) / 6.6))}</text>${segs}<text class="axis" x="${(x0 + 6).toFixed(1)}" y="${y + barH - 4}">${dur(it.total)}</text></g>`;
     });
-    return html`<h2>Where the time went</h2><div class="legend">${NAMES.map((n, k) => html`<span><i class="sw m${k + 1}"></i>${n}</span>`)}</div>
+    return html`<div class="card-h"><h2>Where the time went</h2><span class="lede">Each session’s time, by epic</span></div>${headline}<div class="legend" style="margin:0 0 10px">${NAMES.map((n, k) => html`<span><i class="sw m${k + 1}"></i>${n}</span>`)}</div>
       <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Where each epic's time went">${rows}</svg>
       ${tableView('tv:breakdown', ['Epic', ...NAMES, 'Total'], items.map(it => [it.name, ...it.v.map(v => dur(v)), dur(it.total)]))}`;
+  }
+
+  // What an AC cost in each finished epic: the rates every estimate multiplies by (estimate.py uses every blueprint's)
+  function rates(st) {
+    const pts = [];
+    for (const b of blueprints(st)) for (const e of epicsOf(b)) {
+      const a = obj(e.actual);
+      if (e.state !== 'done' || !num(a.sessions) || !isNum(a.cost_usd) || !num(e.acs)) continue;
+      pts.push({ b, e, v: a.cost_usd / e.acs, t: num(a.agent_s) / e.acs, mine: ui.bp === 'all' || b.id === ui.bp });
+    }
+    if (pts.length < 3) return '';
+    const vals = pts.map(p => p.v).sort((p, q) => p - q);
+    const q = p => { const pos = (vals.length - 1) * p, lo = Math.floor(pos), hi = Math.min(lo + 1, vals.length - 1); return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo); };
+    const p50 = q(0.5), p90 = q(0.9);
+    const steps = [1, 2, 5, 10, 20, 50, 100], top = vals[vals.length - 1];
+    const step = steps.find(s => top / s <= 6) || 200, max = Math.ceil(top / step) * step;
+    const W = chartWidth(), L = 10, R = 24, r = 5, gapY = 2 * r + 3;
+    const x = v => L + (v / max) * (W - L - R);
+    // a dot strip: each dot takes the nearest free level to the centre line, so none overlaps another
+    const placed = [];
+    for (const p of pts.slice().sort((a, b) => a.v - b.v)) {
+      const px = x(p.v);
+      for (let k = 0; ; k++) {
+        const lvl = k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2);
+        if (!placed.some(o => o.lvl === lvl && Math.abs(o.px - px) < 2 * r + 2)) { placed.push({ ...p, px, lvl }); break; }
+      }
+    }
+    const lvMax = Math.max(1, ...placed.map(p => Math.abs(p.lvl)));
+    const mid = 30 + lvMax * gapY, H = mid + lvMax * gapY + 40;
+    const many = ui.bp === 'all' && blueprints(st).length > 1, bps = blueprints(st).map(b => b.id);
+    const cls = p => (many ? `m${(bps.indexOf(p.b.id) % 3) + 1}` : p.mine ? 'm1' : 'de');
+    const f1 = n => n.toFixed(1);
+    const axis = [];
+    for (let v = 0; v <= max + 1e-9; v += step) axis.push(html`<line class="grid" x1="${f1(x(v))}" x2="${f1(x(v))}" y1="18" y2="${H - 26}"/><text class="axis" x="${f1(x(v))}" y="${H - 10}" text-anchor="middle">$${v}</text>`);
+    const ref = (v, label, anchorEnd) => html`<line class="ref" x1="${f1(x(v))}" x2="${f1(x(v))}" y1="14" y2="${H - 26}"/><text class="axis" x="${f1(x(v) + (anchorEnd ? -4 : 4))}" y="12" text-anchor="${anchorEnd ? 'end' : 'start'}">${label}</text>`;
+    const close = Math.abs(x(p90) - x(p50)) < 80;
+    // name the costliest few above P90; a name that would run into one already placed goes under its dot
+    const outliers = placed.slice().sort((a, b) => b.v - a.v).slice(0, 4).filter(p => p.v > p90);
+    const boxes = [];
+    for (const p of outliers) {
+      p.name = `${ctx.multi ? `${p.b.id}:` : ''}${p.e.id}`;
+      const w = p.name.length * 6.6 + 6, lo = p.px - w / 2, hi = p.px + w / 2;
+      p.below = boxes.some(([a, z, below]) => !below && lo < z && hi > a);
+      boxes.push([lo, hi, p.below]);
+    }
+    const dots = placed.sort((a, b) => Number(a.mine) - Number(b.mine)).map(p => {
+      const tip = `${p.b.id}:${p.e.id} ${p.e.title || ''}\n${money(p.v)} per AC · ${dur(p.t)} agent time per AC\n${plural(num(p.e.acs), 'AC')} · ${money(obj(p.e.actual).cost_usd, obj(p.e.actual).cost_estimated)} in all`;
+      return html`<g class="row" tabindex="0" data-tip="${tip}" aria-label="${tip}"><circle class="hit" cx="${f1(p.px)}" cy="${f1(mid + p.lvl * gapY)}" r="${r + 5}"/><circle class="${cls(p)} dot-a" cx="${f1(p.px)}" cy="${f1(mid + p.lvl * gapY)}" r="${r}"/></g>`;
+    });
+    const labels = outliers.map(p => html`<text class="axis" x="${f1(p.px)}" y="${f1(mid + p.lvl * gapY + (p.below ? r + 14 : -r - 5))}" text-anchor="middle">${p.name}</text>`);
+    const legend = many ? html`<div class="legend" style="margin:0 0 6px">${blueprints(st).map((b, i) => html`<span><i class="sw m${(i % 3) + 1}" style="border-radius:50%"></i>${bpName(b)}</span>`)}</div>`
+      : ui.bp !== 'all' ? html`<div class="legend" style="margin:0 0 6px"><span><i class="sw m1" style="border-radius:50%"></i>This blueprint</span><span><i class="sw de" style="border-radius:50%"></i>Other blueprints</span></div>` : '';
+    const sorted = pts.slice().sort((a, b) => b.v - a.v);
+    return html`<div class="card-h"><h2>What an acceptance criterion costs</h2><span class="lede">Finished epics; every estimate multiplies an epic’s ACs by these rates</span></div>
+      <p class="headline">Half of the finished epics cost under <b>${money(p50)}</b> per AC; one in ten cost over <b>${money(p90)}</b>. That spread is why the remaining cost is a range.</p>${legend}
+      <svg class="chart" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Cost per acceptance criterion of each finished epic">${axis}<line class="base" x1="${L}" x2="${W - R}" y1="${H - 26}" y2="${H - 26}"/>${ref(p50, `P50 ${money(p50)}`, true)}${ref(p90, `P90 ${money(p90)}`, !close ? true : false)}${dots}${labels}</svg>
+      ${tableView('tv:rates', ['Epic', 'Per AC', 'Agent time per AC', 'ACs', 'Cost'], sorted.map(p => [`${p.b.id}:${p.e.id} ${p.e.title || ''}`, money(p.v), dur(p.t), num(p.e.acs), money(obj(p.e.actual).cost_usd, obj(p.e.actual).cost_estimated)]))}`;
   }
 
   // ---------- repositories, discovery, footer ----------
@@ -696,12 +1234,16 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     if (!list.length) return '';
     const row = r => {
       const eps = arr(r.epics_in_progress);
-      const chips = eps.map(k => { const hit = ctx.index.get(k); return html`<span class="chip${inBp(k) ? '' : ' dim'}">${epicRef(k)}${hit && hit.e.title ? ` ${hit.e.title}` : ''}</span>`; });
-      return html`<tr><td><strong>${r.name || '?'}</strong>${r.hub ? html` <span class="chip">hub</span>` : ''}</td><td class="path">${r.path || '—'}</td>
+      const chips = eps.map(k => { const hit = ctx.index.get(k); return html`<span class="chip${inBp(k) ? '' : ' dim'}" title="${hit && hit.e.title ? hit.e.title : ''}">${epicRef(k)}${hit && hit.e.title ? ` ${clip(String(hit.e.title), 34)}` : ''}</span>`; });
+      const path = String(r.path || '').replace(/^\/(?:Users|home)\/[^/]+(?=\/)/, '~');
+      return html`<tr><td class="repo-name"><strong>${r.name || '?'}</strong>${r.hub ? html` <span class="chip">hub</span>` : ''}<span class="meta" title="${r.path || ''}">${path}</span></td>
         <td class="gate">${r.gate ? html`<code>${r.gate}</code>` : html`<span class="muted">none</span>`}</td>
         <td>${chips.length ? chips : html`<span class="muted">none</span>`}${eps.length > 1 ? html`<span class="warnline">${eps.length} epics change it in parallel</span>` : ''}</td></tr>`;
     };
-    return html`<h2>Repositories</h2><div class="scroll"><table><thead><tr><th>Repository</th><th>Path</th><th>Gate</th><th>Epics in progress</th></tr></thead><tbody>${list.map(row)}</tbody></table></div>`;
+    const busy = list.filter(r => arr(r.epics_in_progress).length).sort((a, b) => arr(b.epics_in_progress).length - arr(a.epics_in_progress).length);
+    const idle = list.filter(r => !arr(r.epics_in_progress).length);
+    return html`<div class="card-h"><h2>Repositories</h2><span class="lede">${plural(busy.length, 'repository', 'repositories')} with work in progress, ${idle.length} idle</span></div>
+      <div class="scroll"><table><thead><tr><th>Repository</th><th>Gate</th><th>Epics in progress</th></tr></thead><tbody>${busy.concat(idle).map(row)}</tbody></table></div>`;
   }
 
   function discovery(st) {
@@ -709,7 +1251,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     for (const b of selected(st)) for (const [kind, d] of Object.entries(obj(b.discovery))) rows.push({ b, kind, d: obj(d) });
     if (!rows.length) return '';
     const kindName = k => (k === 'discover' ? 'Discovery' : k === 'amend' ? 'Amendments' : k);
-    return html`<h2>Discovery and amendments</h2><div class="scroll"><table><thead><tr>${ctx.multi ? html`<th>Blueprint</th>` : ''}<th>Work</th><th class="num">Agent time</th><th class="num">Waited for you</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
+    return html`<div class="card-h"><h2>Discovery and amendments</h2></div><div class="scroll"><table><thead><tr>${ctx.multi ? html`<th>Blueprint</th>` : ''}<th>Work</th><th class="num">Agent time</th><th class="num">Waited for you</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
       <tbody>${rows.map(r => html`<tr>${ctx.multi ? html`<td>${bpName(r.b)}</td>` : ''}<td>${kindName(r.kind)}</td><td class="num">${dur(r.d.agent_s)}</td><td class="num">${dur(r.d.wait_s)}</td><td class="num">${isNum(r.d.sessions) ? r.d.sessions : '—'}</td><td class="num">${tok(r.d.tokens)}</td><td class="num">${costOf(r.d.cost_usd, r.d.cost_estimated, r.d.sessions)}</td></tr>`)}</tbody></table></div>`;
   }
 
@@ -724,7 +1266,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     if (!el || el._html === s) return;
     el._html = s;
     el.innerHTML = s;
-    if (el.tagName === 'SECTION') el.hidden = !s;
+    if (el.tagName === 'SECTION' || el.tagName === 'NAV') el.hidden = !s;
   }
 
   function render() {
@@ -734,11 +1276,15 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     if (st) {
       document.title = `${st.project || 'Project'} · blueprint dashboard`;
       put('hdr', header(st));
+      put('tabs', tabs(st));
+      put('needs', needs(st));
       put('kpis', kpis(st));
+      put('sprints', sprints(st));
       put('sessions', sessions(st));
       put('epics', epicsSection(st));
       put('timeline', timeline(st));
       put('breakdown', breakdown(st));
+      put('rates', rates(st));
       put('repos', repos(st));
       put('discovery', discovery(st));
       put('foot', footer(st));
@@ -757,19 +1303,22 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     }
   }
 
+  // The clock of the last update keeps one width (HH:MM:SS), so nothing beside it moves; how long ago is in its tooltip.
   function tickLive() {
     const el = document.getElementById('live');
     if (!el) return;
-    let cls = 'live', text;
+    const clock = t => `${ftime(t)}:${pad2(new Date(t).getSeconds())}`;
+    let cls = 'live', text, title = '';
     if (SNAPSHOT) { const g = ui.state && ts(ui.state.generated); cls += ' snap'; text = `Snapshot · ${g ? `${fdate(g)} ${ftime(g)}` : 'time unknown'}`; }
     else if (!ui.lastOk) { cls += ui.error ? ' bad' : ''; text = ui.error ? 'Not connected' : 'Connecting…'; }
     else {
       const age = (Date.now() - ui.lastOk) / 1000;
-      if (age * 1000 > STALE_MS) { cls += ' stale'; text = `No update for ${dur(age)} — is blueprint.py dashboard still running?`; }
-      else { cls += ' ok'; text = `Live · updated ${age < 1 ? 'just now' : `${dur(age)} ago`}`; }
+      if (age * 1000 > STALE_MS) { cls += ' stale'; text = `Stale · ${clock(ui.lastOk)}`; title = `No update for ${dur(age)}. Is blueprint.py dashboard still running?`; }
+      else { cls += ' ok'; text = `Live · ${clock(ui.lastOk)}`; title = `Updated ${age < 1 ? 'just now' : `${dur(age)} ago`}; the page asks every 3 s`; }
     }
     if (el.className !== cls) el.className = cls;
     if (el.textContent !== text) el.textContent = text;
+    if (el.title !== title) el.title = title;
   }
 
   async function poll() {
@@ -787,16 +1336,31 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   }
 
   // ---------- events ----------
-  document.addEventListener('change', ev => {
-    if (!ev.target || ev.target.id !== 'bp') return;
-    ui.bp = ev.target.value || 'all';
+  document.addEventListener('click', ev => {
+    const fold = ev.target && ev.target.closest ? ev.target.closest('[data-fold]') : null;
+    if (fold && ui.state) { // open or close every sprint group of a blueprint in the epics list
+      const b = blueprints(ui.state).find(x => x.id === fold.getAttribute('data-of'));
+      if (b) for (const s of sprintsOf(b)) ui.groups.set(sprintKey(b, s), fold.getAttribute('data-fold') === 'open');
+      safeRender();
+      return;
+    }
+    const t = ev.target && ev.target.closest ? ev.target.closest('[data-bp]') : null;
+    if (!t) return;
+    ui.bp = t.getAttribute('data-bp') || 'all';
     try { history.replaceState(null, '', ui.bp === 'all' ? location.pathname + location.search : `#bp=${encodeURIComponent(ui.bp)}`); } catch (_) { /* file: URLs may refuse */ }
     safeRender();
   });
-  document.addEventListener('toggle', ev => { // remember which epics (and table views) are expanded
+  window.addEventListener('hashchange', () => { // a link to #bp=desk switches the tab without a reload
+    const m = /(?:^#|&)bp=([^&]*)/.exec(location.hash || '');
+    let bp = 'all';
+    if (m) { try { bp = decodeURIComponent(m[1]) || 'all'; } catch (_) { bp = 'all'; } }
+    if (bp !== ui.bp) { ui.bp = bp; safeRender(); }
+  });
+  document.addEventListener('toggle', ev => { // remember which epics, sprint groups and table views are expanded
     const d = ev.target;
-    if (!d || d.tagName !== 'DETAILS' || !d.dataset || !d.dataset.key) return;
-    if (d.open) ui.open.add(d.dataset.key); else ui.open.delete(d.dataset.key);
+    if (!d || d.tagName !== 'DETAILS' || !d.dataset) return;
+    if (d.dataset.group) ui.groups.set(d.dataset.group, d.open);
+    else if (d.dataset.key) { if (d.open) ui.open.add(d.dataset.key); else ui.open.delete(d.dataset.key); }
   }, true);
 
   const tip = document.getElementById('tip');

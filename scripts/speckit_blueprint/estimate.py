@@ -99,8 +99,8 @@ def parallelism(parts: dict, bid: str) -> int:
     return best
 
 
-def schedule(order: list, durations: dict, deps: dict, k: int) -> float:
-    """List scheduling on `k` slots respecting dependencies; returns the finish time."""
+def schedule(order: list, durations: dict, deps: dict, k: int, each: bool = False):
+    """List scheduling on `k` slots respecting dependencies; returns the finish time (`each`: every epic's)."""
     finish: dict = {}
     slots = [0.0] * max(1, k)
     for e in order:
@@ -109,6 +109,8 @@ def schedule(order: list, durations: dict, deps: dict, k: int) -> float:
         start = max(ready, slots[i])
         finish[e] = start + durations[e]
         slots[i] = finish[e]
+    if each:
+        return finish
     return max(finish.values()) if finish else 0.0
 
 
@@ -145,27 +147,52 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
     rng = random.Random(42)
     priced = [r for r in rates if r["cost_usd"] is not None]
     sums = {"agent_s": [], "cost_usd": [], "tokens": [], "finish_s": []}
+    # the delivery plan's sprints: each run also adds up the open epics of each sprint (where it is finished)
+    home = bp.delivery_plan()["home"]
+    groups: dict = {}
+    for e in remaining:
+        if e["id"] in home:
+            groups.setdefault(home[e["id"]], []).append(e["id"])
+    gsums = {g: {"agent_s": [], "cost_usd": [], "finish_s": []} for g in groups}
     for _ in range(RUNS):
         totals = {"agent_s": 0.0, "cost_usd": 0.0, "tokens": 0.0}
-        cal = {}
+        cal, each = {}, {}
         for e in remaining:
             r = rng.choice(rates)
             acs = epic_acs(e)
-            for key in ("agent_s", "tokens"):
-                totals[key] += max(0.0, r[key] * acs - spent[e["id"]][key])
+            mine = {key: max(0.0, r[key] * acs - spent[e["id"]][key]) for key in ("agent_s", "tokens")}
             if priced:  # an epic finished without a recorded cost lends the cost of one that has it
                 rc = r if r["cost_usd"] is not None else rng.choice(priced)
-                totals["cost_usd"] += max(0.0, rc["cost_usd"] * acs - (spent[e["id"]]["cost_usd"] or 0.0))
+                mine["cost_usd"] = max(0.0, rc["cost_usd"] * acs - (spent[e["id"]]["cost_usd"] or 0.0))
+            for key, v in mine.items():
+                totals[key] += v
+            each[e["id"]] = mine
             cal[e["id"]] = max(0.0, r["calendar_s"] * acs - spent[e["id"]]["calendar_s"])
         for key in totals:
             sums[key].append(totals[key])
-        sums["finish_s"].append(schedule(order, cal, deps, k))
+        finish = schedule(order, cal, deps, k, each=True)
+        sums["finish_s"].append(max(finish.values()) if finish else 0.0)
+        for g, ids in groups.items():
+            gsums[g]["agent_s"].append(sum(each[i]["agent_s"] for i in ids))
+            gsums[g]["cost_usd"].append(sum(each[i].get("cost_usd", 0.0) for i in ids))
+            gsums[g]["finish_s"].append(max(finish.get(i, 0.0) for i in ids))
     for key in sums:  # too few finished epics to know the spread: widen P90 as for one epic
         if (len(priced) if key == "cost_usd" else len(rates)) < 3:
             p50 = quantile(sums[key], 0.5)
             sums[key] = sums[key] + [p50 * 1.5] * max(1, len(sums[key]) // 5)
+            for g in (g for g in gsums if key in gsums[g]):
+                vals = gsums[g][key]
+                gsums[g][key] = vals + [quantile(vals, 0.5) * 1.5] * max(1, len(vals) // 5)
     now = _dt.datetime.now().astimezone()
     fin = [quantile(sums["finish_s"], 0.5), quantile(sums["finish_s"], 0.9)]
+    result["sprints"] = {
+        g: {"epics": len(groups[g]),
+            "agent_s": [round(quantile(v["agent_s"], q), 1) for q in (0.5, 0.9)],
+            "cost_usd": [round(quantile(v["cost_usd"], q), 2) for q in (0.5, 0.9)] if priced else None,
+            "calendar_s": [round(quantile(v["finish_s"], q), 1) for q in (0.5, 0.9)],
+            "finish": [(now + _dt.timedelta(seconds=quantile(v["finish_s"], q))).date().isoformat() for q in (0.5, 0.9)]}
+        for g, v in gsums.items()
+    }
     result["remaining"] = {
         "agent_s": [round(quantile(sums["agent_s"], q), 1) for q in (0.5, 0.9)],
         "cost_usd": [round(quantile(sums["cost_usd"], q), 2) for q in (0.5, 0.9)] if priced else None,

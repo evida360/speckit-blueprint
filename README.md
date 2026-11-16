@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.5, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.5.6, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,7 +57,7 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.5.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.6.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
@@ -241,10 +241,15 @@ python3 .specify/extensions/blueprint/scripts/blueprint.py dashboard            
 python3 .specify/extensions/blueprint/scripts/blueprint.py dashboard --export status.html   # a snapshot to share
 ```
 
-The dashboard shows totals, remaining ranges and the finish date; every live session (what it is doing,
-or how long it has waited for you); epics expandable to stories and tasks with their repositories, branches
-and gates; a timeline with forecast ranges; where each epic's time went; and which epics touch each
-repository. For Claude Code's status line, add to `.claude/settings.json`:
+The dashboard leads with what needs you: sessions waiting for your answer, each blueprint's next command,
+and the epics nothing blocks. Then totals, remaining ranges and the finish date; the sprints of the
+blueprint's delivery plan (§16.2), each a bar of its epics sized by acceptance criteria, with its exit
+criteria and a P50–P90 finish; every live session (what it is doing, or how long it has waited for you);
+the epics grouped by sprint, with their size, the critical path and what each waits for and unlocks,
+expandable to stories and tasks with their repositories, branches and gates; a timeline by sprint; where
+each epic's time went; what an acceptance criterion has cost in each finished epic; and which epics touch
+each repository. With several blueprints, tabs pick one, and the All tab folds each blueprint into one
+row. For Claude Code's status line, add to `.claude/settings.json`:
 
 ```json
 {"statusLine": {"type": "command", "command": "python3 .specify/extensions/blueprint/scripts/blueprint.py statusline"}}
@@ -346,7 +351,7 @@ blueprint.py migrate [--apply]              # upgrade a 0.4 project
 
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.5`).
+1. Update the extension (`specify extension add … v0.5.6`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not

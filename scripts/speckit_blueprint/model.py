@@ -158,38 +158,124 @@ class Blueprint:
     def epic_text(self, epic: dict) -> str:
         return "\n".join(self.lines[epic["start"] : epic["end"]])
 
-    def epic_order(self) -> list[int] | None:
-        """Epic numbers in the delivery plan's epic order (§16.1, `| Order | Epic | Goal | … |`): sorted by
-        the Order number, rows without one last, table position breaking ties. None when the blueprint has
-        no table with both an Order and an Epic column outside code fences."""
+    def find_table(self, *columns: str, within: Heading | None = None) -> tuple[list[str], list[list[str]]] | None:
+        """The first table outside code fences whose header has every one of `columns` (lowercase, without
+        `*` and backticks), within a heading's span when given: its header and the cells of its rows."""
+        lo, hi = (within.idx, within.end) if within else (0, len(self.lines))
         fenced = False
-        for i, line in enumerate(self.lines):
+        for i in range(lo, hi):
+            line = self.lines[i]
             if line.lstrip().startswith("```"):
                 fenced = not fenced
-            if fenced or not line.strip().startswith("|") or i + 1 >= len(self.lines):
+            if fenced or not line.strip().startswith("|") or i + 1 >= hi:
                 continue
             if not re.match(r"^\|\s*:?-{2,}", self.lines[i + 1].strip()):
                 continue
             header = [re.sub(r"[*`]", "", c).strip().lower() for c in table_cells(line)]
-            if "order" not in header or "epic" not in header:
+            if not all(c in header for c in columns):
                 continue
-            col_order, col_epic = header.index("order"), header.index("epic")
             rows = []
-            for k, row in enumerate(self.lines[i + 2 :]):
+            for row in self.lines[i + 2 : hi]:
                 if not row.strip().startswith("|"):
                     break
-                cells = table_cells(row)
-                if len(cells) <= max(col_order, col_epic):
-                    continue
-                order = re.search(r"\d+", cells[col_order])
-                for num in order_cell_epics(cells[col_epic]):
-                    rows.append((int(order.group(0)) if order else float("inf"), k, num))
-            out: list[int] = []
-            for _, _, num in sorted(rows):
-                if num not in out:
-                    out.append(num)
-            return out
+                rows.append(table_cells(row))
+            return header, rows
         return None
+
+    def epic_order(self) -> list[int] | None:
+        """Epic numbers in the delivery plan's epic order (§16.1, `| Order | Epic | Goal | … |`): sorted by
+        the Order number, rows without one last, table position breaking ties. None when the blueprint has
+        no table with both an Order and an Epic column outside code fences."""
+        found = self.find_table("order", "epic")
+        if found is None:
+            return None
+        header, table = found
+        col_order, col_epic = header.index("order"), header.index("epic")
+        rows = []
+        for k, cells in enumerate(table):
+            if len(cells) <= max(col_order, col_epic):
+                continue
+            order = re.search(r"\d+", cells[col_order])
+            for num in order_cell_epics(cells[col_epic]):
+                rows.append((int(order.group(0)) if order else float("inf"), k, num))
+        out: list[int] = []
+        for _, _, num in sorted(rows):
+            if num not in out:
+                out.append(num)
+        return out
+
+    def delivery_plan(self) -> dict:
+        """What the delivery plan (§16) tells people about the epics, read for the dashboard: from the epic
+        order table each epic's goal, size and reason; the sprints table (`| Sprint | Epics | Milestone |
+        Exit criteria |`); the critical path (`Critical path: E00 → E02 → …`). Parts the blueprint does not
+        have are empty. An epic a sprint lists belongs to the last sprint that lists it (`home`), where it
+        is finished; an earlier listing carries its note (`E04 (design work starts)`)."""
+        plan = next((h for h in self.headings if h.level == 2 and "delivery plan" in h.text.lower()), None)
+        epics: dict[str, dict] = {}
+        found = self.find_table("order", "epic")
+        if found:
+            header, rows = found
+            col = {key: next((i for i, h in enumerate(header) if h.startswith(key)), None)
+                   for key in ("order", "epic", "goal", "size", "why")}
+            for cells in rows:
+                if len(cells) <= col["epic"]:
+                    continue
+                cell = lambda key: plain_cell(cells[col[key]]) if col[key] is not None and col[key] < len(cells) else ""  # noqa: E731
+                order = re.search(r"\d+", cell("order"))
+                for num in order_cell_epics(cells[col["epic"]]):
+                    epics.setdefault(f"E{num:02d}", {"order": int(order.group(0)) if order else None, "goal": cell("goal"),
+                                                     "size": size_cell(cell("size")), "why": cell("why")})
+        sprints: list[dict] = []
+        found = self.find_table("sprint", "epics", within=plan) or (self.find_table("sprint", "epics") if plan else None)
+        if found:
+            header, rows = found
+            col = {key: next((i for i, h in enumerate(header) if h.startswith(key)), None)
+                   for key in ("sprint", "epics", "milestone", "exit", "goal")}
+            for cells in rows:
+                if len(cells) <= col["epics"]:
+                    continue
+                cell = lambda key: plain_cell(cells[col[key]]) if col[key] is not None and col[key] < len(cells) else ""  # noqa: E731
+                listed = sprint_cell_epics(cells[col["epics"]])
+                if not listed:
+                    continue
+                sprints.append({"label": cell("sprint") or str(len(sprints) + 1), "epics": [e for e, _ in listed],
+                                "notes": {e: n for e, n in listed if n}, "milestone": cell("milestone") or cell("goal"),
+                                "exit": cell("exit")})
+        home = {}
+        for s in sprints:
+            for e in s["epics"]:
+                home[e] = s["label"]
+        return {"epics": epics, "sprints": sprints, "home": home, "critical_path": self.critical_path(plan)}
+
+    def critical_path(self, within: Heading | None = None) -> list[str]:
+        """The epics of the first `critical path` line with arrows (`→` or `->`), in order: `Critical path:
+        E00 → E02 → E04 approval → E05 (amended A-13). E20-S01 …` → E00, E02, E04, E05. The chain ends where
+        its sentence does. The delivery plan's own line wins over one elsewhere in the blueprint."""
+        spans = ([(within.idx, within.end)] if within else []) + [(0, len(self.lines))]
+        for lo, hi in spans:
+            fenced = False
+            for line in self.lines[lo:hi]:
+                if line.lstrip().startswith("```"):
+                    fenced = not fenced
+                m = None if fenced else re.search(r"critical path", line, re.I)
+                if not m:
+                    continue
+                parts = re.split(r"\s*(?:→|->|⟶|⇒)\s*", line[m.end():])
+                first = re.findall(r"\bE(\d{2})\b", parts[0])
+                if len(parts) < 2 or not first:
+                    continue
+                out = [f"E{first[-1]}"]
+                for p in parts[1:]:
+                    nxt = re.match(r"[\s*`]*E(\d{2})\b", p)
+                    if not nxt:
+                        break
+                    if f"E{nxt.group(1)}" not in out:
+                        out.append(f"E{nxt.group(1)}")
+                    if re.search(r"[.;!?](\s|$)|\bE\d{2}\b", p[nxt.end():]):  # the sentence (or the chain) ends here
+                        break
+                if len(out) > 1:
+                    return out
+        return []
 
     # -- definitions
 
@@ -384,6 +470,49 @@ def order_cell_epics(cell: str) -> list[int]:
         out.append(int(m.group(1)))
         text = text[m.end():]
         m = EPIC_CELL_MORE_RE.match(text)
+    return out
+
+
+SIZE_CELL_RE = re.compile(r"^(XXS|XS|S|M|L|XL|XXL)\b", re.I)
+SIZE_WORDS = {"small": "S", "medium": "M", "large": "L"}
+SPRINT_RANGE_RE = re.compile(r"(?<!:)\bE(\d{2})\s*(?:–|—|-|to\b|through\b)\s*E?(\d{2})\b")
+
+
+def size_cell(cell: str) -> str | None:
+    """An epic order row's size: `M`, `L (two weeks)` → L, `Large` → L; anything else is no size."""
+    m = SIZE_CELL_RE.match(cell)
+    if m:
+        return m.group(1).upper()
+    word = re.match(r"[A-Za-z]+", cell)
+    return SIZE_WORDS.get(word.group(0).lower()) if word else None
+
+
+def plain_cell(cell: str) -> str:
+    """A table cell as plain text: no bold, code or link markup."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", cell)
+    return re.sub(r"[*`]", "", text).strip()
+
+
+def sprint_cell_epics(cell: str) -> list[tuple[str, str]]:
+    """The epics a sprints table row lists, each with its note: `E00, E01, E04 (design work starts)` →
+    [('E00', ''), ('E01', ''), ('E04', 'design work starts')]; `E04 approval` → [('E04', 'approval')];
+    `E02–E05` → every epic in the range. Another blueprint's epic (`one:E18`) is not this one's."""
+    out: list[tuple[str, str]] = []
+    for part in re.split(r"[,;]", plain_cell(cell)):
+        ids: list[str] = []
+        for m in SPRINT_RANGE_RE.finditer(part):
+            a, b = int(m.group(1)), int(m.group(2))
+            if 0 < b - a <= 100:
+                ids += [f"E{n:02d}" for n in range(a, b + 1)]
+        rest = SPRINT_RANGE_RE.sub(" ", part)
+        ids += [f"E{n}" for n in re.findall(r"(?<!:)\bE(\d{2})\b", rest)]
+        note = re.sub(r"\s+", " ", re.sub(r"(?:\b[A-Za-z][A-Za-z0-9]*:)?\bE\d{2}\b", " ", rest)).strip(" —–-:;.,")
+        if note.startswith("(") and note.endswith(")") and note.count("(") == 1:
+            note = note[1:-1].strip()
+        note = re.sub(r"^S(\d{2})\b", r"story S\1", note)  # `E20-S01`: one story of the epic
+        for e in ids:
+            if all(e != x for x, _ in out):
+                out.append((e, note))
     return out
 
 

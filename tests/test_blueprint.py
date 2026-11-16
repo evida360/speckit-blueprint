@@ -1611,6 +1611,39 @@ class ModelTest(unittest.TestCase):
         self.assertIsNone(order("```\n" + head + "| 1 | E00 | x |\n```\n"))  # a format example
         self.assertIsNone(order("E00, then E01.\n"))
 
+    def test_delivery_plan(self):
+        from speckit_blueprint.model import Blueprint, size_cell, sprint_cell_epics
+
+        def plan(text):
+            return Blueprint(Path("BLUEPRINT.md"), text).delivery_plan()
+
+        text = ("## 16. Delivery plan — sprints and epic order (Delivery Plan)\n\n"
+                "| Order | Epic | Goal | Depends on | Stories | Size | Why now, not earlier/later |\n|---|---|---|---|---|---|---|\n"
+                "| 1 | E00 Foundation | `check` green | — | 2 | M | Everything builds on it |\n"
+                "| 2 | **E01** Sales | Sales are **recorded** | E00 | 3 | L (two weeks) | The core loop |\n"
+                "| 3 | E02 Totals | Totals | E01 | 1 | big | After sales |\n\n"
+                "```\n| Sprint | Epics | Milestone | Exit criteria |\n|---|---|---|---|\n| 9 | E09 | Example | x |\n```\n\n"
+                "| Sprint | Epics | Milestone | Exit criteria |\n|---|---|---|---|\n"
+                "| 1 | E00, E01 (design starts) | Skeleton | `check` green |\n"
+                "| 2 | E01 approval, E02 | [Sales](#s) live | A sale is saved |\n"
+                "| After | — | Nothing | — |\n\n"
+                "- The critical path is E00 → E01 approval → E02 (amended A-1). E09 → E10 is another chain.\n")
+        p = plan(text)
+        self.assertEqual(p["epics"]["E00"], {"order": 1, "goal": "check green", "size": "M", "why": "Everything builds on it"})
+        self.assertEqual((p["epics"]["E01"]["goal"], p["epics"]["E01"]["size"], p["epics"]["E02"]["size"]), ("Sales are recorded", "L", None))
+        # the fenced example and a row that lists no epic are not sprints
+        self.assertEqual([(s["label"], s["epics"], s["notes"], s["milestone"], s["exit"]) for s in p["sprints"]],
+                         [("1", ["E00", "E01"], {"E01": "design starts"}, "Skeleton", "check green"),
+                          ("2", ["E01", "E02"], {"E01": "approval"}, "Sales live", "A sale is saved")])
+        self.assertEqual(p["home"], {"E00": "1", "E01": "2", "E02": "2"})  # finished in the last sprint that lists it
+        self.assertEqual(p["critical_path"], ["E00", "E01", "E02"])  # the chain ends with its sentence
+        self.assertEqual(plan("Critical path: **E01** → E02 → E04. E01's approval gates the rest.\n")["critical_path"], ["E01", "E02", "E04"])
+        self.assertEqual(plan("E00, then E01.\n"), {"epics": {}, "sprints": [], "home": {}, "critical_path": []})
+        self.assertEqual([size_cell(c) for c in ("S", "xl", "L (two weeks)", "Large", "big", "")], ["S", "XL", "L", "L", None, None])
+        self.assertEqual(sprint_cell_epics("E02–E04, E05 to E06; **E07** approval, E20-S01 (evida-id first), one:E18"),
+                         [("E02", ""), ("E03", ""), ("E04", ""), ("E05", ""), ("E06", ""), ("E07", "approval"),
+                          ("E20", "story S01 (evida-id first)")])
+
 
 class MetricsTest(ProjectTest):
     """Transcripts → time, tokens, cost, stories per epic; estimates; status line; export."""
@@ -1971,6 +2004,30 @@ class MetricsTest(ProjectTest):
         self.json_cli("compile", "E01")
         trace = json.loads((self.feature() / ".blueprint.json").read_text(encoding="utf-8"))
         self.assertEqual(trace["estimate"]["agent_s"], [2430.0, 3645.0])
+
+    def test_sprints_in_estimates_and_the_dashboard(self):
+        self.add_epic_02()
+        self.edit_blueprint("E00, then E01.", "| Order | Epic | Goal | Size |\n|---|---|---|---|\n| 1 | E00 Foundation | The gate | S |\n"
+                            "| 2 | E01 Record sales | Sales | M |\n| 3 | E02 Daily totals | Totals | S |\n\n"
+                            "| Sprint | Epics | Milestone | Exit criteria |\n|---|---|---|---|\n| 1 | E00 | Skeleton | check green |\n"
+                            "| 2 | E01, E02 | Sales | A sale is saved |\n\nCritical path: E00 → E01 → E02.\n")
+        self.e00_session()
+        self.finish("E00")
+        rest = self.json_cli("estimate")
+        self.assertEqual(sorted(rest["sprints"]), ["2"])  # sprint 1 is done
+        s2 = rest["sprints"]["2"]
+        # sprint 2 holds every open epic, so it ends with the project: the same runs, the same quantiles
+        self.assertEqual((s2["epics"], s2["agent_s"], s2["finish"]), (2, rest["remaining"]["agent_s"], rest["remaining"]["finish"]))
+        out = self.tmp / "dashboard.html"
+        self.run_cli("dashboard", "--export", str(out))
+        state = json.loads(out.read_text(encoding="utf-8").split("window.__STATE__ = ", 1)[1].split(";</script>", 1)[0])
+        b = state["blueprints"][0]
+        self.assertEqual(([s["label"] for s in b["plan"]["sprints"]], b["plan"]["critical_path"], b["plan"]["order"]),
+                         (["1", "2"], ["E00", "E01", "E02"], ["E00", "E01", "E02"]))
+        self.assertEqual(sorted(b["plan"]["sprint_estimates"]), ["2"])
+        e = {x["id"]: x for x in b["epics"]}
+        self.assertEqual((e["E01"]["size"], e["E01"]["goal"], e["E01"]["sprint"], e["E01"]["critical"]), ("M", "Sales", "2", True))
+        self.assertEqual((e["E00"]["sprint"], e["E02"]["why"]), ("1", None))
 
     def test_backfill_and_status_line(self):
         tr = self.e00_session(sid="s3")

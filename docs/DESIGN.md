@@ -79,6 +79,14 @@ overrides `repositories:` setting by setting: `evida-id: {remote: …}` there ke
   fail otherwise); an epic without the table uses the hub alone.
 - Task lines keep their repository prefix (`- [ ] T004 [P] [US1] [evida-desk] DESK:E08-S01-T2 …`).
   `status` warns about prefixes that name no configured repository.
+- The delivery plan (§16 of the template) tells people what the dashboard and the estimates show; it never
+  changes what an epic is built from. Besides the delivery order (see Lifecycle), the epic order table
+  gives each epic its goal, size (`S`, `M`, `L`, `XL`; `Large` reads as `L`, anything else is no size) and
+  reason (the `Why now…` column). The sprints table, `| Sprint | Epics | Milestone | Exit criteria |`,
+  groups the epics into sprints. An epic two rows list (`E04 (design work starts)`, later `E04 approval`)
+  belongs to the last one, where it is finished; the earlier row keeps its note. The first `Critical
+  path:` line with arrows (`E00 → E02 → E04 approval → E05`) marks the critical path, up to the end of its
+  sentence. Tables and lines inside the delivery plan section win over ones elsewhere.
 
 ## Commands and hooks
 
@@ -290,20 +298,37 @@ Units are formatted in one place: `2h 5m`, `45m`, `38s`, `1d 4h`, `$3.10`, `2.4M
   the remaining epics; the finish date schedules them, in status's delivery order, on the `Depends on`
   graph with the parallelism observed so far. Fewer than three finished epics: the range is marked low
   confidence and P90 is widened by half, since one or two epics say nothing about the spread.
+- Each sprint of the delivery plan gets its P50–P90 from the same runs: the agent time and cost of its open
+  epics, and the date its last open epic is done (`estimate` → `sprints`, keyed by the sprint's label).
 
 ## Dashboard
 
 `blueprint.py dashboard` serves a single static page and `/api/state` on `127.0.0.1` (stdlib
 `http.server`), recomputing the state on request with a short cache. `--export FILE` writes the page with
 the state embedded (for managers). `blueprint.py statusline` prints one line for Claude Code's status
-line. The page is English, uses units everywhere, has no external dependencies, and shows: totals,
-remaining ranges and the finish date; one row per live session (worktree, epic, story, current activity,
-waiting for you); epics expandable to stories and tasks with their repositories; a timeline with forecast
-ranges; where each epic's time went; a per-repository view. A blueprint selector covers several products.
+line. The page is English, uses units everywhere and has no external dependencies. It shows, summary
+first:
+
+- What needs you: sessions waiting for an answer, each blueprint's next command, reviews and recompiles,
+  the epics nothing blocks that could be built in a second worktree, and open epics no sprint lists.
+- Totals, remaining ranges and the finish date, and the sprint the work is in.
+- The sprints: each a bar of its epics, every block as wide as its acceptance criteria and colored by
+  state, with its exit criteria and a P50–P90 finish. Finished sprints fold into one row.
+- One row per live session (worktree, epic, story, current activity, waiting for you).
+- The epics, grouped by sprint in delivery order: size, state, tasks, time and cost, the critical path,
+  what each waits for and unlocks; expandable to the plan's goal and reason, stories, tasks and
+  repositories. A blueprint without a sprints table gets one list in delivery order.
+- A timeline by sprint, with the open sprints' epics and their forecast ranges.
+- Where each epic's time went, and what an acceptance criterion cost in each finished epic: the rates
+  every estimate multiplies by, so the spread of the remaining cost is visible.
+- A per-repository view.
+
+Tabs pick a blueprint. With every blueprint shown, each section folds each blueprint into one row (its
+sprints as a ribbon, its progress and finish), and the timeline shows one row per sprint.
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.5 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.6 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds

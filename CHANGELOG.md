@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.6 — 2026-11-17
+
+The dashboard shows the delivery plan: sprints, epic sizes and the critical path, with a forecast per
+sprint. What needs you comes first.
+
+- The blueprint's delivery plan (§16) is read for the dashboard: the epic order table's goal, size and
+  reason, the sprints table (sprint, epics, milestone, exit criteria) and the critical path. An epic two
+  sprints list belongs to the last one, where it is finished. None of it changes what an epic is built
+  from or what `next` picks.
+- `estimate` gives each sprint a P50–P90 of the agent time and cost its open epics still need and of the
+  date its last open epic is done, from the same runs as the project's (`sprints`).
+- New sections. "Needs you": sessions waiting for your answer, each blueprint's next command, reviews and
+  recompiles, the epics nothing blocks that could be built in a second worktree, and open epics no sprint
+  lists. "Sprints": one bar of epics per sprint, each block as wide as its acceptance criteria and colored
+  by state, with the exit criteria and a P50–P90 finish. "What an acceptance criterion costs": the per-AC
+  cost of every finished epic, the rates each estimate multiplies by, so the spread behind a cost range
+  is visible.
+- The epics are grouped by sprint in delivery order, finished sprints closed. A row shows the epic's size
+  (S/M/L from the plan, and its acceptance criteria on one scale for every epic), whether it is on the
+  critical path, what it waits for and how many epics wait for it; opened, it shows the plan's goal and
+  reason. A blueprint without a sprints table keeps one list, now in delivery order.
+- The timeline groups the epics by sprint, folds finished sprints into one row and marks where each sprint
+  ends. With every blueprint shown, it has one row per sprint.
+- The timeline scheduled its forecast in blueprint order, so an epic written before the one it depends on
+  started at "now", beside it. It follows the delivery order now, as `estimate` does.
+- With every blueprint shown, each section folds each blueprint into one row (its sprints as a ribbon, its
+  progress and finish), and an epic being built no longer opens with all its tasks.
+- Tabs replace the blueprint selector. The live indicator shows the time of the last update, one width at
+  every tick, so the tabs beside it stay still.
+- Smaller fixes: a token total over a billion reads `5.70B`, not `5681.9M`; estimate ranges in rows are
+  rounded to hours and dollars, with the exact range in the tooltip; a done epic with unchecked tasks says
+  so; repository paths start at `~`; Spent says "No recorded sessions yet" instead of "0s agent time"; a
+  link to `#bp=<id>` switches the tab.
+
 ## 0.5.5 — 2026-11-16
 
 Metrics: agent time is the agent's time in its turns. The time between turns, and the wait for an answer

@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: blueprint
   name: "Blueprint"
-  version: "0.5.5"
+  version: "0.5.6"
   description: "Evidence-backed product discovery into blueprints, compiled into Spec Kit features one epic at a time, across one or many repositories (Claude Code)"
   author: "Mohsen Samiei"
   repository: "https://github.com/mohsensamiei/speckit-blueprint"
