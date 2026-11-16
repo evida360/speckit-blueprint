@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .core import IMPLICIT_ID, TRACE_FILE, active_feature, read_trace, review_status, task_counts
+from .core import IMPLICIT_ID, TRACE_FILE, active_feature, read_trace, review_sha, review_status, task_counts
 from .config import COMMAND_STEP, bp_config, resolve_id
 from .model import Blueprint
 from .blocks import CONSTITUTION, constitution_state, managed_blocks
@@ -46,6 +46,13 @@ def review_check(review: Path, acs: dict) -> tuple[str | None, list[str]]:
     return status, missing
 
 
+def before_0_5(d: Path, trace: dict) -> bool:
+    """review.md is the DONE review `blueprint.py migrate` recorded in a folder compiled before 0.5, unchanged
+    since: it counts as done without an evidence entry per AC, as it did under 0.4."""
+    rec = trace.get("review_before_0_5") or {}
+    return rec.get("status") == "DONE" and bool(rec.get("sha")) and rec["sha"] == review_sha(d / "review.md")
+
+
 def epic_acs(epic: dict) -> dict:
     return {st["id"]: st["acs"] for st in epic["stories"] if st["acs"]}
 
@@ -69,6 +76,9 @@ def epic_row(root: Path, cfg: dict, bp: Blueprint, e: dict) -> dict:
     rv, missing = review_check(d / "review.md", trace.get("acs") or epic_acs(e))
     changed = stale_units(bp, trace)
     row.update(tasks_total=total, tasks_done=done, review=rv)
+    if rv == "DONE" and before_0_5(d, trace):
+        row["review_before_0_5"] = True
+        missing = []
     if rv == "DONE" and not missing:
         row["state"] = "done"
     elif total and done == total:
@@ -124,7 +134,7 @@ def dependency_done(root: Path, cfg: dict, dep: str, rows: dict) -> bool:
         return False
     trace = read_trace(d) or {}
     rv, missing = review_check(d / "review.md", trace.get("acs") or {})
-    return rv == "DONE" and not missing
+    return rv == "DONE" and (not missing or before_0_5(d, trace))
 
 
 def migration_reasons(root: Path, cfg: dict, bp: Blueprint | None) -> list[str]:
@@ -137,9 +147,16 @@ def migration_reasons(root: Path, cfg: dict, bp: Blueprint | None) -> list[str]:
 
     specs = root / cfg["specs_dir"]
     if specs.is_dir():
-        legacy = [d.name for d in specs.iterdir() if (d / TRACE_FILE).is_file() and legacy_id((read_trace(d) or {}).get("blueprint_id"))]
+        traces = {d.name: read_trace(d) for d in sorted(specs.iterdir()) if (d / TRACE_FILE).is_file()}
+        legacy = [n for n, t in traces.items() if legacy_id((t or {}).get("blueprint_id"))]
         if legacy:
-            out.append(f"{len(legacy)} feature folder(s) without their blueprint's id ({', '.join(sorted(legacy)[:3])}…)")
+            out.append(f"{len(legacy)} feature folder(s) without their blueprint's id ({', '.join(legacy[:3])}…)")
+        # compile writes `acs` since 0.5; migrate records the review of every folder compiled before
+        unrecorded = [n for n, t in traces.items() if t is not None and "acs" not in t and "review_before_0_5" not in t
+                      and (t.get("blueprint_id") or cfg["id"]) == cfg["id"]]
+        if unrecorded:
+            out.append(f"{len(unrecorded)} feature folder(s) compiled before 0.5 without their review recorded "
+                       f"({', '.join(unrecorded[:3])}…)")
     for rel in (CONSTITUTION, Path("CLAUDE.md")):
         p = root / rel
         if p.is_file():

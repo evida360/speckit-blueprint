@@ -53,6 +53,13 @@ REPO_TABLE = (
     "Both repositories deploy together.\n"
 )
 
+# E01's repository fields as schema 1 (0.4) wrote them
+SCHEMA_1_REPOS = (
+    "**Target repositories**\n\n| Repository | Role |\n|---|---|\n| `core` | Provides the sale API |\n| `app` | Consumes it |\n\n"
+    "**Repositories** — Order: `core` first, then `app`. `core`: base `master`, working branch `feat/sales`, "
+    "contracts: provides API-01. `app`: base `main`, branch `feat/sales-ui`, contracts: none.\n"
+)
+
 DONE_REVIEW = {
     "E00": "Status: DONE\n# Handoff — E00\nAC evidence: E00-S01 AC-1 src/smoke.test.ts::passes\n",
     "E01": "Status: DONE\n# Handoff — E01\nAC evidence: E01-S01 AC-1 test/sale.int.test.ts::stores · AC-2 test/sale.int.test.ts::rejects\n"
@@ -1192,13 +1199,7 @@ class MigrateTest(ProjectTest):
             p = self.tmp / rel
             if p.is_file():
                 p.write_text(p.read_text(encoding="utf-8").replace(" id=default -->", " -->").replace("blueprint-id default, ", ""), encoding="utf-8")
-        self.edit_blueprint(
-            "**Risks specific to this epic** R-01.\n",
-            "**Risks specific to this epic** R-01.\n"
-            "**Target repositories**\n\n| Repository | Role |\n|---|---|\n| `core` | Provides the sale API |\n| `app` | Consumes it |\n\n"
-            "**Repositories** — Order: `core` first, then `app`. `core`: base `master`, working branch `feat/sales`, "
-            "contracts: provides API-01. `app`: base `main`, branch `feat/sales-ui`, contracts: none.\n",
-        )
+        self.edit_blueprint("**Risks specific to this epic** R-01.\n", "**Risks specific to this epic** R-01.\n" + SCHEMA_1_REPOS)
         (self.feature("E00") / "tasks.md").write_text("- [ ] T001 [US1] [core] E00-S01-T1 init\n- [ ] T002 [app] wire\n")
         self.configure("# old config\nguard: true\neffort_check: false\n")
 
@@ -1234,6 +1235,119 @@ class MigrateTest(ProjectTest):
         self.assertIn("Notes (schema 1, kept by `blueprint.py migrate`)", (self.feature() / "plan.md").read_text(encoding="utf-8"))
         again = json.loads(self.run_cli("migrate").stdout)
         self.assertEqual((again["changes"], again["next"]), ([], "Nothing to migrate."))
+
+
+class UpgradeFrom04Test(ProjectTest):
+    """Epics built and reviewed under 0.4, then migrated: they stay as built and as done."""
+
+    root_name = "wiki"
+
+    def setUp(self):
+        super().setUp()
+        from speckit_blueprint.core import sha
+        from speckit_blueprint.model import Blueprint
+
+        for name in ("core", "app"):
+            (self.base / name).mkdir()
+        self.add_epic_02()
+        self.json_cli("bootstrap")
+        for epic in ("E00", "E01", "E02"):
+            self.json_cli("compile", epic)
+        # 0.4 counted any DONE review: E00's names no AC; E01's leaves AC-2 out and a task open by decision
+        (self.feature("E00") / "tasks.md").write_text("- [x] T001 a\n")
+        (self.feature("E00") / "review.md").write_text("Status: DONE\n# Handoff — E00\ncheck: green\n")
+        (self.feature("E01") / "tasks.md").write_text("- [x] T001 a\n- [ ] T002 moved to E02 by decision\n")
+        (self.feature("E01") / "review.md").write_text(
+            "Status: DONE\n# Handoff — E01\nAC evidence: E01-S01 AC-1 test/sale.int.test.ts · E01-S02 AC-1 src/undo.test.ts\n")
+        (self.feature("E02") / "tasks.md").write_text("- [x] T001 a\n- [ ] T002 b\n")
+        self.edit_blueprint("**Risks specific to this epic** R-01.\n", "**Risks specific to this epic** R-01.\n" + SCHEMA_1_REPOS)
+        bp = Blueprint(self.blueprint())
+        for epic in ("E00", "E01", "E02"):  # the traces 0.4 wrote, hashing the schema-1 text
+            path = self.feature(epic) / ".blueprint.json"
+            t = json.loads(path.read_text(encoding="utf-8"))
+            t = {k: v for k, v in t.items() if k not in ("branch", "depends", "repositories", "acs", "estimate")}
+            t["epic_sha"] = sha(bp.epic_text(bp.epic(epic[1:])))
+            path.write_text(json.dumps(t, indent=2), encoding="utf-8")
+        self.configure("guard: true\neffort_check: false\n")
+
+    def row(self, st, epic):
+        return next(e for e in st["epics"] if e["epic"] == epic)
+
+    def trace(self, epic):
+        return json.loads((self.feature(epic) / ".blueprint.json").read_text(encoding="utf-8"))
+
+    def test_migrate_keeps_them_built_and_done(self):
+        st = self.state()
+        self.assertEqual(st["next"]["command"], "migrate")
+        self.assertIn("3 feature folder(s) compiled before 0.5 without their review recorded", " ".join(st["migration_needed"]))
+        e00, e02 = self.row(st, "E00"), self.row(st, "E02")
+        self.assertEqual((e00["state"], e00["review_missing"], e02["blocked_by"]), ("implemented", ["E00-S01 AC-1"], ["E00"]))
+        dry = json.loads(self.run_cli("migrate").stdout)
+        self.assertEqual(dry["warnings"], [])
+        changes = {(c["file"], c["change"]) for c in dry["changes"]}
+        e01 = "specs/002-e01-record-sales/.blueprint.json"
+        self.assertIn((e01, "epic_sha: E01 as converted (recorded in accepted)"), changes)
+        self.assertIn((e01, "review_before_0_5: DONE, counted as done while review.md is unchanged"), changes)
+        self.assertIn(("specs/003-e02-daily-totals/.blueprint.json",
+                       "review_before_0_5: no review.md; a DONE review written later needs evidence for every AC"), changes)
+        self.assertNotIn("review_before_0_5", self.trace("E01"))  # the dry run wrote nothing
+        self.json_cli("migrate", "--apply")
+        st = self.state()
+        self.assertNotIn("migration_needed", st)
+        e00, e01, e02 = (self.row(st, e) for e in ("E00", "E01", "E02"))
+        self.assertEqual((e00["state"], e00.get("review_before_0_5")), ("done", True))
+        self.assertEqual((e01["state"], e01.get("review_before_0_5")), ("done", True))
+        self.assertNotIn("changed_since_compile", e01)  # converting its repository fields changed nothing it was built from
+        self.assertNotIn("review_missing", e01)
+        self.assertNotIn("blocked_by", e02)
+        self.assertEqual((st["next"]["command"], st["next"]["epic"]), ("speckit-implement", "E02"))
+        self.assertEqual(self.json_cli("stale"), [])
+        t = self.trace("E01")
+        self.assertEqual(t["accepted"][-1]["changed"], ["E01"])
+        self.assertTrue(t["accepted"][-1]["note"].startswith("blueprint.py migrate:"))
+        self.assertEqual(sorted(t["review_before_0_5"]), ["date", "sha", "status"])
+        self.assertEqual(json.loads(self.run_cli("migrate").stdout)["next"], "Nothing to migrate.")
+
+    def test_the_old_rule_holds_while_the_review_is_unchanged(self):
+        self.json_cli("migrate", "--apply")
+        review = self.feature("E01") / "review.md"
+        review.write_bytes(review.read_bytes().replace(b"\n", b"  \r\n"))  # another machine's line endings
+        self.assertEqual(self.row(self.state(), "E01")["state"], "done")
+        review.write_text(review.read_text(encoding="utf-8") + "Manual checks for you: none\n", encoding="utf-8")
+        e01 = self.row(self.state(), "E01")
+        self.assertEqual((e01["state"], e01["review_missing"]), ("in-progress", ["E01-S01 AC-2"]))
+        self.assertNotIn("review_before_0_5", e01)
+        # E02 was not DONE before the migration: a DONE review written now needs evidence for every AC
+        (self.feature("E02") / "review.md").write_text("Status: DONE\n# Handoff — E02\ncheck: green\n")
+        st = self.state()
+        self.assertEqual(self.row(st, "E02")["review_missing"], ["E02-S01 AC-1"])
+        self.assertNotIn("migration_needed", st)
+
+    def test_a_change_made_before_the_migration_stays_reported(self):
+        self.edit_blueprint("When undo is tapped", "When undo is pressed")
+        dry = json.loads(self.run_cli("migrate").stdout)
+        self.assertEqual(dry["warnings"], ["specs/002-e01-record-sales/.blueprint.json: E01 had changed since compile "
+                                           "before the migration; review the change, then `blueprint.py accept` or recompile"])
+        self.json_cli("migrate", "--apply")
+        self.assertEqual(self.row(self.state(), "E01")["changed_since_compile"], ["E01"])
+        self.assertNotIn("accepted", self.trace("E01"))
+
+    def test_a_project_migrated_by_0_5_0(self):
+        """0.5.0's migrate recorded no review; running migrate again records them and changes nothing else."""
+        self.json_cli("migrate", "--apply")
+        for epic in ("E00", "E01", "E02"):
+            path = self.feature(epic) / ".blueprint.json"
+            t = json.loads(path.read_text(encoding="utf-8"))
+            del t["review_before_0_5"]
+            path.write_text(json.dumps(t, indent=2), encoding="utf-8")
+        st = self.state()
+        self.assertEqual(st["migration_needed"], ["3 feature folder(s) compiled before 0.5 without their review recorded "
+                                                  "(001-e00-foundation, 002-e01-record-sales, 003-e02-daily-totals…)"])
+        self.assertEqual(self.row(st, "E00")["state"], "implemented")
+        dry = json.loads(self.run_cli("migrate").stdout)
+        self.assertEqual({c["change"].split(":")[0] for c in dry["changes"]}, {"review_before_0_5"})
+        self.assertEqual(self.json_cli("migrate", "--apply")["next"], "Review the diff, then run `blueprint.py status`.")
+        self.assertEqual([self.row(self.state(), e)["state"] for e in ("E00", "E01", "E02")], ["done", "done", "in-progress"])
 
 
 class LookupTest(ProjectTest):

@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.0, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.5.1, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,7 +57,7 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.0.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.1.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
@@ -326,15 +326,22 @@ blueprint.py migrate [--apply]              # upgrade a 0.4 project
 
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.0`).
+1. Update the extension (`specify extension add … v0.5.1`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not
-   convert. Review it, then `blueprint.py migrate --apply` and check the diff.
+   convert. Compiled epics stay as built: the conversion is recorded in each trace's `accepted` list
+   instead of reporting the epic changed since compile. A review that said `Status: DONE` keeps counting
+   as done without an evidence entry per AC while review.md is unchanged (`review_before_0_5` in the
+   trace). Review it, then `blueprint.py migrate --apply` and check the diff.
 3. Run `blueprint.py bootstrap --blueprint <id>` for each blueprint, so the managed blocks use this
    version's wording; then `blueprint.py status`.
 4. Optional: `blueprint.py metrics --backfill` to start the metrics from the transcripts Claude Code still
    keeps.
+
+Migrated with 0.5.0 already? After updating, status asks for `blueprint.py migrate` once more: it records
+the reviews written before 0.5 and changes nothing else. An epic 0.5.0 left "changed since compile" needs
+`blueprint.py accept <epic> --note "…"`.
 
 ## Development
 

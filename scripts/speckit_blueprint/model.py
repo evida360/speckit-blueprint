@@ -30,9 +30,10 @@ class Unit:
 
 
 class Blueprint:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, text: str | None = None):
+        """`text` instead of the file's content: migrate reads the blueprint it converts before writing it."""
         self.path = path
-        self.raw = path.read_text(encoding="utf-8")
+        self.raw = path.read_text(encoding="utf-8") if text is None else text
         self.lines = self.raw.split("\n")
         self.sha = sha(self.raw)
         self.headings: list[Heading] = []

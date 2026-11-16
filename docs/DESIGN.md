@@ -130,7 +130,10 @@ The constitution has a sixth state, `outdated`: the content hash of the configur
 the one recorded in the managed block. `next` is then bootstrap, before anything else.
 
 `Status: DONE` counts only when review.md has an `AC evidence` entry for every `AC-n` of every story of
-the epic; otherwise status reports the epic `implemented` with the missing ACs.
+the epic; otherwise status reports the epic `implemented` with the missing ACs. The one exception is a
+review written before 0.5, when any DONE counted: `migrate` records it (`review_before_0_5` in the trace,
+with review.md's hash), and it counts while review.md is unchanged. Status marks such an epic
+`review_before_0_5`; an edited review, or one finished after the migration, needs the evidence.
 
 ## Parallel epics
 
@@ -252,12 +255,21 @@ ranges; where each epic's time went; a per-repository view. A blueprint selector
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.0 (breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.1 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds
   `blueprint_id` to traces that lack it; adds ids to unmarked managed blocks. It prints what it could not
   convert. The runtime no longer guesses for legacy layouts; status reports `migration_needed`.
+- The conversion is not a change to what a compiled epic was built from. When a trace's `epic_sha`
+  matches the epic's text before the conversion, migrate moves it to the converted text and adds an
+  `accepted` entry, as `blueprint.py accept` would; a trace that already differed keeps its hash, so the
+  earlier change stays reported.
+- A folder compiled before 0.5 is one whose trace has no `acs` (compile writes it since 0.5). Migrate
+  records its review then (`review_before_0_5`: the status, the hash of a DONE review, the date), for
+  every such folder, so a review finished after the migration is told apart and held to the evidence
+  rule. Status reports folders without the record as `migration_needed`, which brings a project
+  migrated with 0.5.0 back to migrate.
 
 ## Later
 

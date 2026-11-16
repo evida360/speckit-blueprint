@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.1 — 2026-11-16
+
+Two fixes to upgrading a project built with 0.4.
+
+- `migrate` no longer leaves every compiled epic "changed since compile". Converting an epic's repository
+  fields rewrites its text, not what it was built from: when the trace matched the epic's text before the
+  conversion, its hash moves to the converted text, recorded in the trace's `accepted` list as
+  `blueprint.py accept` would. An epic that had changed before the migration stays reported, with a
+  warning.
+- Reviews written before 0.5 keep counting. 0.4 counted any `Status: DONE`; 0.5 wants an evidence entry
+  for every AC, so epics reviewed under 0.4 dropped back to `implemented` or `in-progress` and blocked the
+  epics that depend on them. `migrate` now records the review of every folder compiled before 0.5
+  (`review_before_0_5` in `.blueprint.json`). A review that said DONE keeps counting as done while
+  review.md is unchanged (line endings and trailing spaces aside); status marks the epic
+  `review_before_0_5`. Once the review is edited, and for any review finished after the migration, 0.5's
+  rule applies.
+- A project already migrated with 0.5.0: status reports the folders whose review is not recorded; run
+  `blueprint.py migrate` again, which changes nothing else. An epic that 0.5.0 left "changed since
+  compile" needs `blueprint.py accept`: the text before the conversion is gone.
+
 ## 0.5.0 — 2026-11-16
 
 One model for one to many repositories, epics built in parallel, guaranteed reasoning effort where it

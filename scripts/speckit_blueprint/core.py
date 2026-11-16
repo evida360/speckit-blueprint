@@ -183,3 +183,12 @@ def review_status(review: Path) -> str | None:
         return None
     m = re.search(r"Status:\s*\**\s*(DONE|IN PROGRESS)", review.read_text(encoding="utf-8"))
     return m.group(1) if m else "UNKNOWN"
+
+
+def review_sha(review: Path) -> str | None:
+    """review.md's hash, blind to line endings (text mode reads CRLF as LF) and trailing spaces, so the same
+    review checked out on another machine, or saved by an editor that trims lines, keeps its hash."""
+    if not review.is_file():
+        return None
+    lines = review.read_text(encoding="utf-8").split("\n")
+    return sha("\n".join(ln.rstrip() for ln in lines).strip())

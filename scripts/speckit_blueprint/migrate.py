@@ -5,17 +5,22 @@ Dry run by default: prints what it would change. `--apply` writes. It converts:
   `repositories:` map built from the names the blueprints and tasks use (siblings of the hub);
 - each epic's `**Target repositories**` table and prose `**Repositories**` line into one table;
 - feature traces without `blueprint_id` (or with `default` in a project that now has several blueprints);
+- the epic hash of a compiled epic whose repository fields it converted, when nothing else changed since
+  compile, so the epic is not reported as changed (recorded in the trace's `accepted` list);
+- the review of each folder compiled before 0.5 (a trace without `acs`), as `review_before_0_5`: a review
+  that said DONE keeps counting as done without an evidence entry per AC while review.md is unchanged;
 - managed blocks without an id (or `id=default`, same case) in the constitution and CLAUDE.md, and a
   compiled constitution's header without `blueprint-id`.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 from pathlib import Path
 
-from .core import EXT_ID, GENERATED_MARK, IMPLICIT_ID, TRACE_FILE, ConfigError
+from .core import EXT_ID, GENERATED_MARK, IMPLICIT_ID, TRACE_FILE, ConfigError, review_sha, review_status, sha
 from .config import EFFORT_STEPS, SCHEMA, bp_config, config_from, load_simple_yaml, parse_simple_yaml
 from .model import Blueprint, field_text, label_block
 from .blocks import CONSTITUTION, managed_blocks, marker
@@ -256,24 +261,72 @@ def migrate_blocks(root: Path, cfg: dict, changes: list) -> dict:
     return out
 
 
-def migrate_traces(root: Path, cfg: dict, changes: list) -> dict:
+def move_epic_sha(trace: dict, old: Blueprint, new: Blueprint, rel: str, today: str, changes: list, warnings: list) -> None:
+    """The conversion rewrites an epic's repository fields, not what the epic was built from. When the
+    trace matches the epic's text before the conversion, its hash moves to the converted text, recorded in
+    `accepted` as `blueprint.py accept` would. A change made before the migration stays reported."""
+    eid = str(trace.get("epic") or "")
+    before, after = old.epic(eid[1:]), new.epic(eid[1:])
+    if before is None or after is None:
+        return
+    old_sha, new_sha = sha(old.epic_text(before)), sha(new.epic_text(after))
+    if old_sha == new_sha:
+        return
+    if trace.get("epic_sha") != old_sha:
+        warnings.append(f"{rel}: {eid} had changed since compile before the migration; review the change, then "
+                        "`blueprint.py accept` or recompile")
+        return
+    trace["epic_sha"] = new_sha
+    trace.setdefault("accepted", []).append({
+        "date": today, "blueprint_sha": new.sha, "changed": [eid],
+        "note": "blueprint.py migrate: repository fields converted to the schema-2 table; the epic stays as built",
+    })
+    changes.append({"file": rel, "change": f"epic_sha: {eid} as converted (recorded in accepted)"})
+
+
+def record_review(folder: Path, trace: dict, rel: str, today: str, changes: list) -> None:
+    """What the review of a folder compiled before 0.5 says now. 0.4 counted any DONE review; 0.5 wants an
+    evidence entry for every AC. A DONE review recorded here keeps counting as done while review.md is
+    unchanged; any other review is held to 0.5's rule once it says DONE."""
+    review = folder / "review.md"
+    status = review_status(review)
+    rec: dict = {"status": status}
+    if status == "DONE":
+        rec["sha"] = review_sha(review)
+    rec["date"] = today
+    trace["review_before_0_5"] = rec
+    changes.append({"file": rel, "change": "review_before_0_5: DONE, counted as done while review.md is unchanged"
+                    if status == "DONE" else
+                    f"review_before_0_5: {status or 'no review.md'}; a DONE review written later needs evidence for every AC"})
+
+
+def migrate_traces(root: Path, cfg: dict, old: dict, new: dict, changes: list, warnings: list) -> dict:
+    """Each feature folder's trace: its blueprint id, the epic hash the conversion changed (`old` and `new`:
+    blueprint id -> the blueprint before and after it), and the review of a folder compiled before 0.5."""
     out = {}
     default = cfg.get("default_blueprint") or next(iter(cfg["blueprints"]))
     specs = root / cfg["specs_dir"]
     if not specs.is_dir():
         return out
+    today = _dt.date.today().isoformat()
     for t in sorted(specs.glob(f"*/{TRACE_FILE}")):
         try:
             trace = json.loads(t.read_text(encoding="utf-8"))
         except ValueError:
             continue
+        rel = t.relative_to(root).as_posix()
+        n = len(changes)
         bid = trace.get("blueprint_id")
-        if bid and not (bid == IMPLICIT_ID and not cfg["implicit"]):
-            continue
-        owner = owner_by_path(cfg, str(trace.get("blueprint") or "")) or default
-        trace["blueprint_id"] = owner
-        out[t] = json.dumps(trace, indent=2, ensure_ascii=False) + "\n"
-        changes.append({"file": t.relative_to(root).as_posix(), "change": f"blueprint_id: {owner}"})
+        if not bid or (bid == IMPLICIT_ID and not cfg["implicit"]):
+            bid = owner_by_path(cfg, str(trace.get("blueprint") or "")) or default
+            trace["blueprint_id"] = bid
+            changes.append({"file": rel, "change": f"blueprint_id: {bid}"})
+        if bid in new:
+            move_epic_sha(trace, old[bid], new[bid], rel, today, changes, warnings)
+        if "acs" not in trace and "review_before_0_5" not in trace:  # compile writes `acs` since 0.5
+            record_review(t.parent, trace, rel, today, changes)
+        if len(changes) > n:
+            out[t] = json.dumps(trace, indent=2, ensure_ascii=False) + "\n"
     return out
 
 
@@ -303,22 +356,26 @@ def migrate(root: Path, apply: bool = False) -> int:
     if new_cfg_text != text and text:
         writes[cfg_path] = new_cfg_text
     known = set(names)
+    converted = {}
     for bid, bp in blueprints.items():
         new = migrate_blueprint(bp, known, changes, warnings)
         if new is not None:
             writes[bp.path] = new
-    writes.update(migrate_traces(root, cfg, changes))
+            converted[bid] = Blueprint(bp.path, new)
+    writes.update(migrate_traces(root, cfg, blueprints, converted, changes, warnings))
     writes.update(migrate_blocks(root, cfg, changes))
     if apply:
         for p, content in writes.items():
             p.write_text(content, encoding="utf-8")
     flag = "" if cfg["implicit"] else " --blueprint <id>"
-    print(json.dumps({
-        "applied": apply,
-        "changes": changes,
-        "warnings": warnings,
-        "next": ("Run `blueprint.py migrate --apply` to write these changes." if not apply and writes else
-                 f"Review the diff, then run `blueprint.py bootstrap{flag}` for each blueprint so the managed blocks use "
-                 "this version's wording, and `blueprint.py status`." if writes else "Nothing to migrate."),
-    }, indent=2, ensure_ascii=False))
+    if not writes:
+        nxt = "Nothing to migrate."
+    elif not apply:
+        nxt = "Run `blueprint.py migrate --apply` to write these changes."
+    elif all(p.name == TRACE_FILE for p in writes):  # a project migrated before: its blocks are as they were
+        nxt = "Review the diff, then run `blueprint.py status`."
+    else:
+        nxt = (f"Review the diff, then run `blueprint.py bootstrap{flag}` for each blueprint so the managed blocks use "
+               "this version's wording, and `blueprint.py status`.")
+    print(json.dumps({"applied": apply, "changes": changes, "warnings": warnings, "next": nxt}, indent=2, ensure_ascii=False))
     return 0
