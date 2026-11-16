@@ -25,9 +25,29 @@ SCRIPT = "python3 .specify/extensions/blueprint/scripts/blueprint.py"
 STORY_ID_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9]*:)?E\d{2}-S\d{2}\b")
 
 
+# An AC in review evidence: "AC-3"; every AC of a range: "AC-1 to AC-5", "AC-1 to 5", "AC-1 through AC-5",
+# "AC-1–AC-4", "AC-1–4", "AC-1…3", "AC-1...3"; each AC of a pair: "AC-5/6", "AC-5/AC-6", "AC-1/2/3".
+# A number ends where its digits do: AC-12 never names AC-1, nor AC-1 AC-12.
+AC_REF_RE = re.compile(r"(?<![\w-])AC-(\d+)(?!\d)")
+AC_RANGE_RE = re.compile(r"(?<![\w-])AC-(\d+)\s*(?:to|through|…|\.\.\.|–)\s*(?:AC-)?(\d+)(?!\w|\.\d)")
+AC_PAIR_RE = re.compile(r"(?<![\w-])AC-\d+(?:/(?:AC-)?\d+)+(?!\w|\.\d)")
+
+
+def named_acs(text: str) -> set[int]:
+    """The numbers of the ACs that evidence text names, one by one, in ranges and in pairs."""
+    out = {int(n) for n in AC_REF_RE.findall(text)}
+    for a, b in AC_RANGE_RE.findall(text):
+        if 0 <= int(b) - int(a) <= 200:
+            out.update(range(int(a), int(b) + 1))
+    for m in AC_PAIR_RE.finditer(text):
+        out.update(int(n) for n in re.findall(r"\d+", m.group(0)))
+    return out
+
+
 def review_check(review: Path, acs: dict) -> tuple[str | None, list[str]]:
     """review.md's status, and the ACs a DONE review gives no evidence for. Evidence for a story is the
-    text from each mention of its ID to the next story ID; every `AC-n` of the story must appear there."""
+    text from each mention of its ID to the next story ID; it must name every AC of the story, as `AC-n`
+    or within a range or pair (`AC-1 to AC-5`, `AC-1–4`, `AC-1…3`, `AC-5/6`)."""
     status = review_status(review)
     if status != "DONE" or not acs:
         return status, []
@@ -39,9 +59,10 @@ def review_check(review: Path, acs: dict) -> tuple[str | None, list[str]]:
         segments[sid] = segments.get(sid, "") + text[pos:end]
     missing = []
     for sid, story_acs in acs.items():
-        seg = segments.get(sid, "")
+        named = named_acs(segments.get(sid, ""))
         for ac in story_acs:
-            if not re.search(r"(?<![\w-])" + re.escape(ac) + r"(?!\d)", seg):
+            n = ac.rpartition("-")[2]
+            if not (n.isdecimal() and int(n) in named):
                 missing.append(f"{sid} {ac}")
     return status, missing
 

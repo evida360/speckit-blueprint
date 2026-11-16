@@ -135,6 +135,10 @@ review written before 0.5, when any DONE counted: `migrate` records it (`review_
 with review.md's hash), and it counts while review.md is unchanged. Status marks such an epic
 `review_before_0_5`; an edited review, or one finished after the migration, needs the evidence.
 
+One entry may name several ACs of its story: a range (`AC-1 to AC-5`, `AC-1 to 5`, `AC-1 through AC-5`,
+`AC-1–AC-4`, `AC-1–4`, `AC-1…3`, `AC-1...3`) counts for every AC in it, a pair (`AC-5/6`) for both. A
+number ends where its digits do: `AC-12` never counts for `AC-1`, nor `AC-1` for `AC-12`.
+
 ## Parallel epics
 
 - `blueprint.py workspace <epic> [--create]` plans (and with `--create` makes) the epic's worktrees: the
@@ -255,7 +259,7 @@ ranges; where each epic's time went; a per-repository view. A blueprint selector
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.1 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.2 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds
