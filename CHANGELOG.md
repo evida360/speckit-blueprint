@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2 — 2026-11-16
+
+- Review evidence may name several ACs at once. Status counted an AC only when its story's evidence named
+  it on its own (`AC-3`), so a finished review that wrote `AC-1 to AC-5 x_test.dart` left AC-2 to AC-4
+  without evidence and the epic `implemented`, asking for the review again. A range in a story's evidence
+  now counts for every AC in it (`AC-1 to AC-5`, `AC-1 to 5`, `AC-1 through AC-5`, `AC-1–AC-4`, `AC-1–4`,
+  `AC-1…3`, `AC-1...3`) and a pair for each of its ACs (`AC-5/6`, `AC-1/2/3`). A number ends where its
+  digits do: `AC-12` never counts for `AC-1`. The review template shows both forms.
+
 ## 0.5.0 — 2026-11-16
 
 One model for one to many repositories, epics built in parallel, guaranteed reasoning effort where it

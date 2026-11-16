@@ -132,6 +132,10 @@ the one recorded in the managed block. `next` is then bootstrap, before anything
 `Status: DONE` counts only when review.md has an `AC evidence` entry for every `AC-n` of every story of
 the epic; otherwise status reports the epic `implemented` with the missing ACs.
 
+One entry may name several ACs of its story: a range (`AC-1 to AC-5`, `AC-1 to 5`, `AC-1 through AC-5`,
+`AC-1–AC-4`, `AC-1–4`, `AC-1…3`, `AC-1...3`) counts for every AC in it, a pair (`AC-5/6`) for both. A
+number ends where its digits do: `AC-12` never counts for `AC-1`, nor `AC-1` for `AC-12`.
+
 ## Parallel epics
 
 - `blueprint.py workspace <epic> [--create]` plans (and with `--create` makes) the epic's worktrees: the

@@ -331,6 +331,40 @@ class StatusTest(ProjectTest):
         e01 = next(e for e in self.state()["epics"] if e["epic"] == "E01")
         self.assertEqual((e01["state"], e01["review_missing"]), ("implemented", ["E01-S01 AC-2"]))
 
+    def test_review_evidence_ranges(self):
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E01")
+        (self.feature() / "tasks.md").write_text("- [x] T001 a\n")
+        review = self.feature() / "review.md"
+        review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 to 2 sale.int\nE01-S02 AC-1 undo::deletes\n")
+        self.assertEqual(next(e for e in self.state()["epics"] if e["epic"] == "E01")["state"], "done")
+        # a range counts in its own story's evidence only
+        review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 sale.int::stores\nE01-S02 AC-1/2 undo::deletes\n")
+        e01 = next(e for e in self.state()["epics"] if e["epic"] == "E01")
+        self.assertEqual((e01["state"], e01["review_missing"]), ("implemented", ["E01-S01 AC-2"]))
+
+    def test_review_evidence_range_forms(self):
+        from speckit_blueprint.status import review_check
+
+        review = self.tmp / "review.md"
+        acs = {"E05-S01": [f"AC-{n}" for n in range(1, 13)]}
+
+        def missing(evidence):
+            review.write_text(f"Status: DONE\nAC evidence: E05-S01 {evidence}\n", encoding="utf-8")
+            return [m.split()[1] for m in review_check(review, acs)[1]]
+
+        for ev in ("AC-1 to AC-12 x_test.dart", "AC-1 to 12 x_test.dart", "AC-1 through AC-6 a · AC-7 through 12 b",
+                   "AC-1–AC-4 a · AC-5–8 b · AC-9…10 c · AC-11...12 d", "AC-1 to 10 a\n  AC-11/12 n/a",
+                   "AC-1/2/3 a · AC-4/AC-5 b · AC-6 to AC-12 c"):
+            self.assertEqual(missing(ev), [], ev)
+        self.assertEqual(missing("AC-1 to AC-5 a · AC-7/8 b"), ["AC-6", "AC-9", "AC-10", "AC-11", "AC-12"])
+        self.assertEqual(missing("AC-1 — 12 cases a · AC-2 to AC-11 b"), ["AC-12"])  # an em dash is no range
+        # a number ends where its digits do: AC-10 to AC-12 never name AC-1, nor AC-1 AC-12
+        self.assertEqual(missing(" · ".join(f"AC-{n} t" for n in range(2, 13))), ["AC-1"])
+        self.assertEqual(missing("AC-2 to AC-12 a"), ["AC-1"])
+        self.assertEqual(missing("AC-1/2 a · AC-3 to 11 b"), ["AC-12"])
+        self.assertEqual(missing("AC-1–2 a · AC-3…11 b"), ["AC-12"])
+
     def test_dependencies_decide_the_next_epic(self):
         self.add_epic_02()
         self.json_cli("bootstrap")

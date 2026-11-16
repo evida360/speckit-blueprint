@@ -47,7 +47,9 @@ decisions.
 6. **Decisions and amendments.** Every decision the spec did not cover has its record (`DR-E03-n`) and
    index row; every changed AC went through `/speckit-blueprint-amend`.
 7. **Write `review.md`** (keep its `## VERIFY-AT-BUILD` section). `Status: DONE` only when 1–6 all pass;
-   status counts it only if every AC of every story has an evidence entry on the story's line(s):
+   status counts it only if every AC of every story has an evidence entry on the story's line(s). One entry
+   may name a range (`AC-1 to AC-4`, `AC-1–4`, `AC-1…3`) or a pair (`AC-5/6`) when one proof covers each
+   AC in it:
 
    ```
    Status: DONE | IN PROGRESS
@@ -55,7 +57,7 @@ decisions.
    Stories: E03-S01 DONE · E03-S02 DONE · …
    AC evidence:
    E03-S01 AC-1 test/…::name · AC-2 manual 2026-11-16, observed … (one line per story, every AC)
-   E03-S02 AC-1 …
+   E03-S02 AC-1 to AC-3 test/…::name · AC-4/5 manual 2026-11-16, observed …
    Repositories: evida-id `feat/…` gate green (abc123) · evida-desk `feat/…` gate green (def456)
    CI: green | not run · staging: deployed | n/a, smoke n/n
    Self-review: <n> items failed and fixed (list), <n> accepted with reason (list)
