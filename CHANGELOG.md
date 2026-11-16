@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.8 — 2026-11-17
+
+`--help` after a command prints that command's usage and runs nothing.
+
+- `blueprint.py dashboard --help` ignored `--help`, started the server and opened a browser; a session
+  that asked for the usage left a dashboard running in the background. Every command now reads `-h` or
+  `--help` anywhere after its name as a request for its usage: the usage lines of that command, every
+  form of it (`workspace --help` shows `workspace E03`, `workspace setup` and `workspace link`). An
+  unknown command prints the whole usage. None of it needs a project.
+
 ## 0.5.7 — 2026-11-17
 
 A retired epic is no longer remaining work. An amendment retires an epic by keeping its heading as a

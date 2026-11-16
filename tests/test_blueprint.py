@@ -2195,6 +2195,22 @@ class MetricsTest(ProjectTest):
             proc.wait(timeout=10)
 
 
+class CliTest(unittest.TestCase):
+    def test_help_after_a_command_prints_its_usage_and_runs_nothing(self):
+        def run(*args):
+            # outside any project: help must not need one; a command that ran would fail or, served, never return
+            return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=tempfile.gettempdir(), capture_output=True,
+                                  text=True, timeout=30)
+
+        res = run("dashboard", "--no-open", "--help")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("blueprint.py dashboard [--port N] [--no-open] [--export FILE]", res.stdout)
+        self.assertNotIn("blueprint.py compile", res.stdout)
+        workspace = run("workspace", "-h").stdout
+        self.assertTrue(all(f in workspace for f in ("workspace E03", "workspace setup", "workspace link")), workspace)
+        self.assertIn("Usage (from the project root", run("nonsense", "--help").stdout)  # an unknown command: everything
+
+
 class UnitsTest(unittest.TestCase):
     def test_formats(self):
         from speckit_blueprint import units

@@ -55,6 +55,7 @@ Resolving the references once, deterministically, at compile time is cheaper and
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -89,9 +90,29 @@ def dump(data) -> None:
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def usage(cmd: str) -> str:
+    """The usage lines of one command (every form of it, with the lines that continue them); the whole
+    usage when the command is unknown."""
+    out, keep = [], False
+    for line in (__doc__ or "").split("\n"):
+        head = re.match(r" {4}blueprint\.py (\S+)", line)
+        if head:
+            keep = head.group(1) == cmd
+        elif not (line.startswith(" " * 6) and line.strip()):
+            keep = False
+        if keep:
+            out.append("  " + line[4:])
+    if not out:
+        return __doc__ or ""
+    return "Usage:\n" + "\n".join(out) + "\n\n`blueprint.py --help` lists every command."
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
+        return 0
+    if "-h" in argv[1:] or "--help" in argv[1:]:  # print the usage and run nothing: `dashboard --help` used to serve
+        print(usage(argv[0]))
         return 0
     root = find_root(Path.cwd())
     cmd, args = argv[0], argv[1:]
