@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.3 — 2026-11-16
+
+- `next` follows the blueprint's epic order. It took the epics as they appear in the file and skipped the
+  blocked ones, so an epic an amendment appended at the end waited behind every epic that happened to be
+  free, even when the delivery plan put it first and earlier epics depend on it: a blueprint with E20 and
+  E21 appended, ranked 10 and 11 in its epic order table and needed by E09, was offered E12, ranked 15.
+  The order now comes from the epic order table (§16.1: the first table with an `Order` and an `Epic`
+  column), by the Order number, with the epics it leaves out after it in blueprint order; without such a
+  table it is blueprint order. Either way an epic's dependencies in the same blueprint that are not done
+  come right before it. Status reports the order as `epic_order`; a `next` that compiles an epic names
+  the epics waiting for it, and the brief's `Current:` line names the epic `next` does.
+- `next` finishes an epic compiled in this checkout before it starts another. An epic in progress that
+  came later in the order than a free epic was left half done while status offered to compile the free
+  one.
+- `**Depends on**` reads every epic a part names. Only the ID a comma-separated part starts with counted,
+  so `E20 and E21` made an epic wait for E20 alone and `E02 to E07` for E02 alone. A range (`E00 to E17`,
+  `E02–E07`, `E00-E02`, `E03 through E05`) now counts for each epic in it, and `E20 and E21` (or `&`, `/`,
+  `+`) for both. The estimate's finish date schedules the remaining epics in the same delivery order.
+- `migrate` adds `schema: 2` under the config's header comment with one blank line after it, not two.
+
 ## 0.5.2 — 2026-11-16
 
 - Review evidence may name several ACs at once. Status counted an AC only when its story's evidence named

@@ -54,7 +54,8 @@ def migrate_config(text: str, raw: dict, changes: list) -> str:
             k = 0
             while k < len(lines) and lines[k].startswith("#"):
                 k += 1
-            lines[k:k] = [f"schema: {SCHEMA}", ""]
+            # under the header comment, as in config-template.yml; one blank line before what follows
+            lines[k:k] = [f"schema: {SCHEMA}"] + ([""] if k < len(lines) and lines[k].strip() else [])
         changes.append({"file": "blueprint-config.yml", "change": f"schema: {SCHEMA}"})
     text = "\n".join(lines)
     span = top_block(text, "effort_check")

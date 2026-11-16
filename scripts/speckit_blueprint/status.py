@@ -158,6 +158,70 @@ def dependency_done(root: Path, cfg: dict, dep: str, rows: dict) -> bool:
     return rv == "DONE" and (not missing or before_0_5(d, trace))
 
 
+def own_dependencies(cfg: dict, epic: dict) -> list[str]:
+    """The epic's dependencies in its own blueprint: `E08`, or `desk:E08` written in desk's blueprint."""
+    out = []
+    for other, eid in epic["depends"]:
+        if other:
+            try:
+                if resolve_id(cfg, other) != cfg["id"]:
+                    continue
+            except Exception:  # noqa: BLE001 - another blueprint's epic, or an unknown one
+                continue
+        out.append(eid)
+    return out
+
+
+def delivery_order(cfg: dict, bp: Blueprint, rows: dict) -> dict:
+    """The order `next` takes the epics in: the delivery plan's epic order table when the blueprint has one
+    (the epics it leaves out follow, in blueprint order), otherwise blueprint order. Either way, an epic's
+    dependencies in this blueprint that are not done come right before it, so an epic added at the end
+    that an earlier one waits for is built first."""
+    table = bp.epic_order()
+    ids = {e["num"]: e["id"] for e in bp.epics}
+    base = [ids[n] for n in table or [] if n in ids]
+    base += [e["id"] for e in bp.epics if e["id"] not in base]
+    deps = {e["id"]: [d for d in own_dependencies(cfg, e) if d in rows] for e in bp.epics}
+    out: list[str] = []
+    seen: set = set()
+
+    def visit(eid: str) -> None:
+        if eid in seen:
+            return
+        seen.add(eid)
+        if rows[eid]["state"] != "done":
+            for dep in sorted(deps[eid], key=base.index):
+                if rows[dep]["state"] != "done":
+                    visit(dep)
+        out.append(eid)
+
+    for eid in base:
+        visit(eid)
+    return {"source": "table" if table else "blueprint", "epics": out}
+
+
+def choose(order: list[str], rows: dict) -> tuple[dict | None, list[str]]:
+    """The epic `next` names, and why each other epic that is not done waits. An epic compiled in this
+    checkout comes first, so one in progress is finished before another starts; then the rest in delivery
+    order. Epics built elsewhere, started on another branch or blocked are skipped."""
+    ready, waiting = [], []
+    for eid in order:
+        row = rows[eid]
+        if row["state"] == "done":
+            continue
+        if row.get("elsewhere"):
+            waiting.append(f"{eid} is being built in {row['elsewhere']['worktree']}")
+        elif row.get("started"):
+            p = row["started"]
+            waiting.append(f"{eid} is merged into {p['merged_into']} but not in this checkout" if p.get("merged_into")
+                           else f"{eid} is in progress on {p['branch'] if p.get('local') else p['remote']}")
+        elif row.get("blocked_by"):
+            waiting.append(f"{eid} waits for {', '.join(row['blocked_by'])}")
+        else:
+            ready.append(row)
+    return next((r for r in ready if r["state"] != "not-compiled"), ready[0] if ready else None), waiting
+
+
 def migration_reasons(root: Path, cfg: dict, bp: Blueprint | None) -> list[str]:
     """Schema-1 leftovers that `blueprint.py migrate` converts."""
     out = []
@@ -240,6 +304,7 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
         if blocked and row["state"] != "done":
             row["blocked_by"] = blocked
     st["epics"] = list(rows.values())
+    st["epic_order"] = delivery_order(cfg, bp, rows)
     st["state"] = "building"
     if write_board:
         mine = {epic_key(cfg["id"], r["epic"]): {k: r.get(k) for k in ("state", "tasks_done", "tasks_total", "review")}
@@ -256,26 +321,18 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
                "Blueprint exists but the constitution and project files are not compiled from it yet.")
         st["next"] = nxt("bootstrap", why, run=f"python3 .specify/extensions/blueprint/scripts/blueprint.py bootstrap{flag}")
         return st
-    waiting = []
-    by_id = {e["id"]: e for e in bp.epics}
-    for row in rows.values():
+    row, waiting = choose(st["epic_order"]["epics"], rows)
+    if row is not None:
         s = row["state"]
         ref = f"{cfg['id']}:{row['epic']}" if cfg.get("multi") else row["epic"]
-        if s == "done":
-            continue
-        if row.get("elsewhere"):
-            waiting.append(f"{row['epic']} is being built in {row['elsewhere']['worktree']}")
-            continue
-        if row.get("started"):
-            p = row["started"]
-            waiting.append(f"{row['epic']} is merged into {p['merged_into']} but not in this checkout" if p.get("merged_into")
-                           else f"{row['epic']} is in progress on {p['branch'] if p.get('local') else p['remote']}")
-            continue
-        if row.get("blocked_by"):
-            waiting.append(f"{row['epic']} waits for {', '.join(row['blocked_by'])}")
-            continue
-        if s in ("not-compiled", "stale"):
-            why = "Blueprint changed after this epic was compiled; recompile it." if s == "stale" else f"Next epic: {row['epic']} — {row['title']}."
+        if s == "stale":
+            st["next"] = nxt("speckit-blueprint-compile", "Blueprint changed after this epic was compiled; recompile it.", row["epic"])
+        elif s == "not-compiled":
+            after = [r["epic"] for r in rows.values() if row["epic"] in r.get("blocked_by", [])]
+            why = f"Next epic: {row['epic']} — {row['title']}."
+            if after:
+                names = ", ".join(after[:10]) + (f" and {len(after) - 10} more" if len(after) > 10 else "")
+                why += f" {names} wait{'s' if len(after) == 1 else ''} for it."
             st["next"] = nxt("speckit-blueprint-compile", why, row["epic"])
         elif s == "compiled":
             st["next"] = nxt("speckit-tasks", "Feature compiled; generate tasks.md, then run /speckit-analyze.", row["epic"])
@@ -292,7 +349,7 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
             st["next"] = nxt("speckit-blueprint-review", why, row["epic"])
         if row.get("feature_directory") and row["feature_directory"] != st["active_feature"] and st["next"]["command"] != "speckit-blueprint-compile":
             st["next"]["activate"] = row["feature_directory"]
-        missing = missing_repositories(root, cfg, by_id[row["epic"]])
+        missing = missing_repositories(root, cfg, next(e for e in bp.epics if e["id"] == row["epic"]))
         if missing:
             st["next"]["missing_repositories"] = missing
             st["next"]["setup"] = f"{SCRIPT} workspace setup {ref}"
@@ -358,8 +415,8 @@ def brief(st: dict) -> str:
         for e in st.get("epics", []):
             if e.get("started"):
                 lines.append(started_note(epic_ref(st, e["epic"], multi), e["title"], e["started"]))
-        cur = next((e for e in st.get("epics", []) if e["state"] != "done" and not e.get("elsewhere")
-                    and not e.get("started") and not e.get("blocked_by")), None)
+        by_epic = {e["epic"]: e for e in st.get("epics", [])}
+        cur = choose((st.get("epic_order") or {}).get("epics") or list(by_epic), by_epic)[0]
         if cur:
             extra = f", tasks {cur['tasks_done']}/{cur['tasks_total']}" if cur.get("tasks_total") else ""
             lines.append(f"Current: {epic_ref(st, cur['epic'], multi)} {cur['title']} — {cur['state']}{extra}.")

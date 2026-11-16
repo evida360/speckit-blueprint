@@ -39,8 +39,9 @@ Compile relies on the template's conventions exactly:
 - `## Epic 03 — <Title>`; header fields (Goal, Personas served, Depends on, Preconditions for the session,
   Scope, Flows and screens implemented, Data and API touched, Risks) before the first story.
 - `**Depends on**` lists epic IDs (`E00, E02`; `one:E18` for another blueprint's epic), then any prose.
-  Each comma-separated part that starts with an epic ID is a dependency; status runs an epic only when
-  they are done. `—` means none.
+  Each comma-separated part that starts with an epic ID is a dependency, with the epics joined to it: a
+  range (`E00 to E17`, `E02–E07`) and `E20 and E21`. Status runs an epic only when they are done. `—`
+  means none.
 - In a project whose config lists `repositories:`, every epic has a `**Repositories**` table, one row per
   repository it changes:
 

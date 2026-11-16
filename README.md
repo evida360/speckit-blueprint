@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.2, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.5.3, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,7 +57,7 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.2.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.3.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
@@ -88,6 +88,11 @@ You mostly talk in plain language; the `speckit-blueprint-flow` skill reads the 
 
 Every new session starts with a short status block, so "continue" is enough. You still approve the
 decision brief, product-changing amendments, migrations, and every commit and push.
+
+"continue" finishes an epic compiled in the checkout before it starts another. A new epic comes in the
+order of the blueprint's epic order table (§16.1, its Order column), or in blueprint order when there is
+no table; either way an epic another one depends on comes first, so an epic an amendment appended at the
+end of the file is built when the plan needs it. `status --json` shows the order as `epic_order`.
 
 | Command | Role |
 |---|---|
@@ -141,7 +146,8 @@ Each epic says which repositories it changes, in order (providers before consume
 
 ## Parallel epics
 
-- `**Depends on** E00, E02` is read: an epic is `blocked` until its dependencies are DONE in the checkout.
+- `**Depends on** E00, E02` is read (`E00 to E17` and `E20 and E21` too): an epic is `blocked` until its
+  dependencies are DONE in the checkout.
 - `blueprint.py workspace E04 --create` makes the epic's worktrees, in the hub and in every repository it
   changes, all on its branch, and prints how to open a session there (`claude --add-dir …`).
 - A board in the hub's git directory (shared by every worktree, never committed) records which worktree
@@ -326,7 +332,7 @@ blueprint.py migrate [--apply]              # upgrade a 0.4 project
 
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.2`).
+1. Update the extension (`specify extension add … v0.5.3`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not

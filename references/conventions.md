@@ -9,8 +9,9 @@ Commands link here instead of repeating it. `blueprint.py` below is
   `blueprint`, `decisions`, `review_checklist`, `sources`), every epic (`state`, `depends`,
   `blocked_by`, `elsewhere`, `started`, `repositories`, `tasks_done`/`tasks_total`, `review_missing`),
   `next` (with `missing_repositories` and `setup` when the next epic needs repositories this machine
-  lacks), the guaranteed `effort` per step and `effort_model`, and `blueprints` (every product in the
-  project).
+  lacks), `epic_order` (the order `next` takes the epics in: the blueprint's epic order table, or
+  blueprint order, with each epic's open dependencies moved before it), the guaranteed `effort` per step
+  and `effort_model`, and `blueprints` (every product in the project).
 - Several blueprints: pass `--blueprint <id>` to every command, or qualify IDs (`desk:E03`). In files
   shared by blueprints (tasks, commits, the constitution) write IDs with the blueprint's prefix
   (`DESK:DR-03`).
@@ -75,6 +76,7 @@ configured level, so work done at a lower level cannot slip in.
   (here or on a remote) but not in this checkout as `started`, and epics whose dependencies are not done
   in this checkout as `blocked`; `next` skips all three. Never compile a `started` epic again: continue
   it on its branch.
+- `next` finishes an epic compiled in this checkout before it starts another, then follows `epic_order`.
 - Compile and activate refuse to switch the active feature under another live session in the same
   worktree.
 

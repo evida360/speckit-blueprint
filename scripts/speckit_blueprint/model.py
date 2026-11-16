@@ -158,6 +158,39 @@ class Blueprint:
     def epic_text(self, epic: dict) -> str:
         return "\n".join(self.lines[epic["start"] : epic["end"]])
 
+    def epic_order(self) -> list[int] | None:
+        """Epic numbers in the delivery plan's epic order (§16.1, `| Order | Epic | Goal | … |`): sorted by
+        the Order number, rows without one last, table position breaking ties. None when the blueprint has
+        no table with both an Order and an Epic column outside code fences."""
+        fenced = False
+        for i, line in enumerate(self.lines):
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+            if fenced or not line.strip().startswith("|") or i + 1 >= len(self.lines):
+                continue
+            if not re.match(r"^\|\s*:?-{2,}", self.lines[i + 1].strip()):
+                continue
+            header = [re.sub(r"[*`]", "", c).strip().lower() for c in table_cells(line)]
+            if "order" not in header or "epic" not in header:
+                continue
+            col_order, col_epic = header.index("order"), header.index("epic")
+            rows = []
+            for k, row in enumerate(self.lines[i + 2 :]):
+                if not row.strip().startswith("|"):
+                    break
+                cells = table_cells(row)
+                if len(cells) <= max(col_order, col_epic):
+                    continue
+                order = re.search(r"\d+", cells[col_order])
+                for num in order_cell_epics(cells[col_epic]):
+                    rows.append((int(order.group(0)) if order else float("inf"), k, num))
+            out: list[int] = []
+            for _, _, num in sorted(rows):
+                if num not in out:
+                    out.append(num)
+            return out
+        return None
+
     # -- definitions
 
     def _add(self, ident: str, unit: Unit) -> None:
@@ -321,6 +354,8 @@ def gen_header(rel_blueprint: str, bp_sha: str, what: str) -> str:
 # Epic fields the scripts read (DESIGN.md "Blueprint conventions the scripts read")
 
 DEP_RE = re.compile(r"^(?:([A-Za-z][A-Za-z0-9-]*):)?E(\d{2})\b")
+# after a dependency: a range to another epic (group 1), or another epic joined by and, &, / or +
+DEP_MORE_RE = re.compile(r"\s*(?:(–|-|to\b|through\b|…|\.\.\.)|and\b|&|/|\+)\s*(?:([A-Za-z][A-Za-z0-9-]*):)?E(\d{2})\b")
 AC_LINE_RE = re.compile(r"^\s*[-*]\s*\**(AC-\d+)\b", re.M)
 SEED_LINE_RE = re.compile(r"^\s*[-*]\s*\**((?:[A-Za-z][A-Za-z0-9]*:)?E\d{2}-S\d{2}-T\d+)\b", re.M)
 REPO_COLUMNS = {
@@ -328,6 +363,28 @@ REPO_COLUMNS = {
     "base": "base", "base branch": "base", "branch": "branch", "working branch": "branch",
     "contracts": "contracts", "contract": "contracts",
 }
+
+
+EPIC_CELL_RE = re.compile(r"(?:Epic\s+|E)(\d{1,2})\b")
+EPIC_CELL_MORE_RE = re.compile(r"\s*(?:,|&|/|\+|and)\s*(?:Epic\s+|E)(\d{1,2})\b")
+
+
+def table_cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def order_cell_epics(cell: str) -> list[int]:
+    """The epics an epic order row names: the ID its Epic cell starts with (`E20 Workspace branches`,
+    `**E20** — …`, `Epic 20 — …`), and any joined to it (`E05, E06 Shell`, `E10 & E11 …`). Epics the title
+    mentions later (`E17 Fixes (after E16)`) are not that row's."""
+    text = re.sub(r"[*`\[\]]", "", cell).strip()
+    out = []
+    m = EPIC_CELL_RE.match(text)
+    while m:
+        out.append(int(m.group(1)))
+        text = text[m.end():]
+        m = EPIC_CELL_MORE_RE.match(text)
+    return out
 
 
 def field_text(block: str, label: str) -> str:
@@ -338,15 +395,35 @@ def field_text(block: str, label: str) -> str:
 def parse_depends(block: str) -> list[tuple[str | None, str]]:
     """`**Depends on** E02, E01 (built); one:E18` → [(None, 'E02'), (None, 'E01'), ('one', 'E18')].
     Each comma- or semicolon-separated part counts only if it starts with an epic ID; prose such as
-    "admin APIs in evida-id" or "— (design runs first)" is for people."""
+    "admin APIs in evida-id" or "— (design runs first)" is for people. Epics joined to that ID count too:
+    a range (`E00 to E17`, `E02–E07`, `E00-E02`, `E03 through E05`) for each epic in it, and `E20 and E21`
+    (or `&`, `/`, `+`) for both; a later ID without a blueprint id takes the first one's."""
     text = field_text(block, "Depends on")
-    out = []
+    out: list[tuple[str | None, str]] = []
+
+    def add(dep: tuple[str | None, str]) -> None:
+        if dep not in out:
+            out.append(dep)
+
     for part in re.split(r"[,;]", text):
-        m = DEP_RE.match(part.strip().strip("`*"))
-        if m:
-            dep = (m.group(1), f"E{m.group(2)}")
-            if dep not in out:
-                out.append(dep)
+        rest = part.strip().strip("`*")
+        m = DEP_RE.match(rest)
+        if not m:
+            continue
+        bid, last = m.group(1), int(m.group(2))
+        add((bid, f"E{last:02d}"))
+        rest = rest[m.end():]
+        m = DEP_MORE_RE.match(rest)
+        while m:
+            other, num = m.group(2) or bid, int(m.group(3))
+            if m.group(1) and other == bid and 0 < num - last <= 100:
+                for n in range(last + 1, num + 1):
+                    add((bid, f"E{n:02d}"))
+            else:
+                add((other, f"E{num:02d}"))
+            bid, last = other, num
+            rest = rest[m.end():]
+            m = DEP_MORE_RE.match(rest)
     return out
 
 

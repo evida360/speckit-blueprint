@@ -51,17 +51,21 @@ When unsure whether a request changes the product, treat it as an amendment and 
 | `speckit-implement` | If `next.activate` is set, first `blueprint.py activate <next.activate>`. Then `/speckit-implement`. |
 | `speckit-blueprint-review` | `/speckit-blueprint-review`. |
 | `wait` | Every remaining epic is blocked, built elsewhere or started on another branch: say which and why; offer to continue a started epic, to build a ready epic of another blueprint, or to finish the dependency first. |
+| `speckit-blueprint-discover` with `state: all-done` | Every epic of this blueprint is done: offer incremental discovery; name any other blueprint with work left. |
+
+The script picks the epic: one compiled in this checkout first, then `epic_order` (the blueprint's epic
+order table, with each epic's open dependencies before it). Do not reorder it from the blueprint; when
+the user wants another order, that is an amendment to the table.
 
 Before an epic step, two checks:
 
 - `next.missing_repositories`: the epic changes repositories that are not on this machine. Name them and
   run `next.setup` (it clones those with a `remote` and fetches the rest). For a repository without a
   `remote`, ask the user for its URL or to clone it to the printed path.
-- An epic marked `started` comes before `next` in blueprint order: it is in progress on another branch
+- An epic marked `started` comes before `next` in `epic_order`: it is in progress on another branch
   (here, on another machine or by someone else). Never compile it again. Ask whether to continue it (on
   its branch, or `workspace <epic> --create`) or to go on with `next`; with `started.merged_into`, ask to
   pull or merge that branch first.
-| `speckit-blueprint-discover` with `state: all-done` | Every epic of this blueprint is done: offer incremental discovery; name any other blueprint with work left. |
 
 **Keep going.** After a step, read the status again and run the next step yourself, until:
 

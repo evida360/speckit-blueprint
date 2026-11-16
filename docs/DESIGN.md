@@ -61,7 +61,8 @@ overrides `repositories:` setting by setting: `evida-id: {remote: …}` there ke
 ## Blueprint conventions the scripts read
 
 - `**Depends on** E00, E02` — epic IDs (`one:E18` for another blueprint's epic). Free text may follow;
-  `—` means none. Readiness uses only the IDs.
+  `—` means none. Readiness uses only the IDs: each comma- or semicolon-separated part that starts with
+  one, and the epics joined to it, a range (`E00 to E17`, `E02–E07`) and `E20 and E21` (`&`, `/`, `+`).
 - `**Repositories**` — a table, one row per repository the epic changes:
 
   ```
@@ -106,11 +107,23 @@ Epic states: `not-compiled`, `compiled`, `stale`, `tasked`, `in-progress`, `impl
 overlays: `blocked` (a dependency is not done in this checkout), `elsewhere` (claimed on the board by
 another worktree) and `started` (not compiled in this checkout, but its hub branch exists, locally other
 than the branch this checkout is on, or on a remote: in progress on that branch). `next` is the first
-epic in blueprint order that is none of these. When every remaining epic is blocked, elsewhere or
-started, `next.command` is `wait` with the reason. Script
+epic in delivery order that is none of these and is compiled in this checkout, so an epic in progress is
+finished before another starts; without one, the first in delivery order that is none of these. When
+every remaining epic is blocked, elsewhere or started, `next.command` is `wait` with the reason. Script
 steps appear as `next.command` `migrate` or `bootstrap` with the exact command in `next.run`; they run
 before any epic. When the next epic changes repositories that are not on this machine, `next` lists them
 (`missing_repositories`) with the command that clones them (`next.setup`).
+
+Delivery order is the blueprint's epic order table (§16.1 of the template: the first table with an
+`Order` and an `Epic` column), by the Order number; rows without a number go last and rows with the same
+number keep their places. An Epic cell names the epic it starts with (`E20 Workspace branches`, `**E20**`,
+`Epic 20 — …`) and any joined to it (`E05, E06 …`). The epics the table leaves out follow it, in blueprint
+order. Without such a table, delivery order is blueprint order. Either way an epic's dependencies in the
+same blueprint that are not done move right before it: an epic an amendment appended, which an earlier
+epic now depends on, is built before that one rather than after every epic that happens to be free.
+Status reports the order as `epic_order` (`source`: `table` or `blueprint`), and a `next` that compiles
+an epic names the epics waiting for it. The table decides because it is where the blueprint states the
+order and the reasons; the epics' places in the file only record when each was written.
 
 A started epic is skipped, not continued, because status cannot tell a teammate's branch from your own
 from another machine; the brief says how to continue it (on its branch, or `workspace <epic> --create`),
@@ -243,9 +256,9 @@ Units are formatted in one place: `2h 5m`, `45m`, `38s`, `1d 4h`, `$3.10`, `2.4M
 - Size, known before building: ACs, stories, edge cases, task seeds, repositories, contracts, IDs by type.
 - Rates from finished epics: agent time, cost, tokens and calendar time per AC; human gates per story.
 - An epic's estimate is a P50–P90 range of rate × ACs. The remaining project is a seeded Monte Carlo over
-  the remaining epics; the finish date schedules them on the `Depends on` graph with the parallelism
-  observed so far. Fewer than three finished epics: the range is marked low confidence and P90 is
-  widened by half, since one or two epics say nothing about the spread.
+  the remaining epics; the finish date schedules them, in status's delivery order, on the `Depends on`
+  graph with the parallelism observed so far. Fewer than three finished epics: the range is marked low
+  confidence and P90 is widened by half, since one or two epics say nothing about the spread.
 
 ## Dashboard
 
@@ -259,7 +272,7 @@ ranges; where each epic's time went; a per-repository view. A blueprint selector
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.2 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.3 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds

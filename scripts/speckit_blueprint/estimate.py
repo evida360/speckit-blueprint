@@ -132,7 +132,8 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
         result["epics"][e["id"]] = {"acs": epic_acs(e), **epic_range(rates, epic_acs(e)), "spent": spent[e["id"]]}
     k = parallelism(parts, bid)
     deps = {e["id"]: [d for b, d in e["depends"] if b is None] for e in remaining}
-    order = [e["id"] for e in remaining]
+    # status's delivery order: each epic after the open ones it depends on, so the schedule waits for them
+    order = [x for x in (st.get("epic_order") or {}).get("epics", []) if x in deps] or [e["id"] for e in remaining]
     rng = random.Random(42)
     sums = {"agent_s": [], "cost_usd": [], "tokens": [], "finish_s": []}
     for _ in range(RUNS):

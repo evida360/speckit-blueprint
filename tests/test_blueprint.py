@@ -45,6 +45,41 @@ EPIC_02 = """## Epic 02 — Daily totals
 
 """
 
+EPIC_03 = """## Epic 03 — Monthly export
+
+**Goal** — Reza exports the month.
+**Personas served** P2
+**Depends on** E00
+**Preconditions for the session** — E00 done.
+
+### E03-S01 — Export the month
+
+**Story** — As **P2 (Reza)**, I want the month's sales as a file, so that I can file the taxes.
+**Acceptance Criteria**
+- AC-1 Given a month of sales, When the export runs, Then a CSV lists them.
+**Edge cases** — none.
+**Tests**
+- Unit: `src/export.test.ts` — covers AC-1.
+**Tasks**
+- E03-S01-T1 Export query.
+**Story DoD** — Default.
+
+**Epic-level tests** — Export end to end.
+**Definition of Done**
+- All stories DONE.
+**Session handoff checklist** — summary.
+
+"""
+
+# §16.1 of the template: the rows need not be in Order, and E03 is left out
+EPIC_ORDER_TABLE = (
+    "| Order | Epic | Goal | Depends on | Stories | Size | Why now, not earlier/later |\n"
+    "|---|---|---|---|---|---|---|\n"
+    "| 1 | E00 Foundation | Repo and `check` | — | 1 | S | Everything builds on it |\n"
+    "| 3 | E01 Record sales | Sara records a sale | E00 | 2 | M | After the totals Reza asked for |\n"
+    "| 2 | **E02** — Daily totals | Reza sees the day's total | E00 | 1 | S | Reza closes the day first |\n"
+)
+
 REPO_TABLE = (
     "**Repositories**\n\n"
     "| Repository | Order | Role | Base | Branch | Contracts |\n|---|---|---|---|---|---|\n"
@@ -196,6 +231,9 @@ class ProjectTest(unittest.TestCase):
 
     def add_epic_02(self):
         self.edit_blueprint("## 18. Session protocol", EPIC_02 + "## 18. Session protocol")
+
+    def add_epic_03(self):
+        self.edit_blueprint("## 18. Session protocol", EPIC_03 + "## 18. Session protocol")
 
     def finish(self, epic):
         (self.feature(epic) / "tasks.md").write_text("- [x] T001 [US1] done\n")
@@ -383,6 +421,49 @@ class StatusTest(ProjectTest):
         st = self.state()
         self.assertNotIn("blocked_by", next(e for e in st["epics"] if e["epic"] == "E02"))
         self.assertEqual(st["next"]["epic"], "E01")
+        self.assertEqual(st["epic_order"], {"source": "blueprint", "epics": ["E00", "E01", "E02"]})
+
+    def test_next_follows_the_epic_order_table(self):
+        self.add_epic_02()
+        self.add_epic_03()
+        self.edit_blueprint("E00, then E01.\n", EPIC_ORDER_TABLE)
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E00")
+        self.finish("E00")
+        st = self.state()
+        # by the Order number, not the row; the epic the table leaves out comes last
+        self.assertEqual(st["epic_order"], {"source": "table", "epics": ["E00", "E02", "E01", "E03"]})
+        self.assertEqual((st["next"]["command"], st["next"]["epic"]), ("speckit-blueprint-compile", "E02"))
+        self.assertIn("Current: E02 Daily totals — not-compiled.", self.run_cli("status", "--brief").stdout)
+
+    def test_an_epic_waited_for_comes_first(self):
+        """An epic added at the end that an earlier one depends on is next, not the first epic that is free."""
+        self.add_epic_02()
+        self.add_epic_03()
+        self.edit_blueprint("**Depends on** E00\n**Preconditions for the session** — E00 done. SMS",
+                            "**Depends on** E00, E03\n**Preconditions for the session** — E00 done. SMS")
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E00")
+        self.finish("E00")
+        st = self.state()
+        self.assertEqual(st["epic_order"]["epics"], ["E00", "E03", "E01", "E02"])
+        self.assertEqual(st["next"]["epic"], "E03")
+        self.assertEqual(st["next"]["why"], "Next epic: E03 — Monthly export. E01 waits for it.")
+        # the table's order holds, and an epic waited for still comes before the one waiting
+        self.edit_blueprint("E00, then E01.\n", EPIC_ORDER_TABLE.replace("| 3 | E01", "| 1 | E01"))
+        self.assertEqual(self.state()["epic_order"], {"source": "table", "epics": ["E00", "E03", "E01", "E02"]})
+
+    def test_an_epic_compiled_here_is_finished_first(self):
+        self.add_epic_02()
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E00")
+        self.finish("E00")
+        self.json_cli("compile", "E02")
+        (self.feature("E02") / "tasks.md").write_text("- [x] T001 [US1] total query\n- [ ] T002 [US1] screen\n")
+        st = self.state()
+        self.assertEqual(st["epic_order"]["epics"], ["E00", "E01", "E02"])
+        self.assertEqual((st["next"]["command"], st["next"]["epic"]), ("speckit-implement", "E02"))
+        self.assertIn("Current: E02 Daily totals — in-progress, tasks 1/2.", self.run_cli("status", "--brief").stdout)
 
     def test_constitution_outdated(self):
         self.json_cli("bootstrap")
@@ -1271,6 +1352,23 @@ class MigrateTest(ProjectTest):
         self.assertEqual((again["changes"], again["next"]), ([], "Nothing to migrate."))
 
 
+class MigrateConfigTest(unittest.TestCase):
+    def test_schema_line(self):
+        from speckit_blueprint.config import parse_simple_yaml
+        from speckit_blueprint.migrate import migrate_config
+
+        for before, after in (
+            # 0.4's template: a header, a blank line, the first key's comment
+            ("# speckit-blueprint configuration.\n\n# Where spec-kit feature folders live.\nspecs_dir: specs\n",
+             "# speckit-blueprint configuration.\nschema: 2\n\n# Where spec-kit feature folders live.\nspecs_dir: specs\n"),
+            ("# old config\nguard: true\n", "# old config\nschema: 2\n\nguard: true\n"),
+            ("guard: true\n", "schema: 2\n\nguard: true\n"),
+            ("schema: 1\n\nguard: true\n", "schema: 2\n\nguard: true\n"),
+            ("# only a comment\n", "# only a comment\nschema: 2\n"),
+        ):
+            self.assertEqual(migrate_config(before, parse_simple_yaml(before), []), after, before)
+
+
 class UpgradeFrom04Test(ProjectTest):
     """Epics built and reviewed under 0.4, then migrated: they stay as built and as done."""
 
@@ -1464,9 +1562,37 @@ class ModelTest(unittest.TestCase):
                          [(None, "E15"), (None, "E18")])
         self.assertEqual(parse_depends("**Depends on** — (design runs first, beside E00)"), [])
         self.assertEqual(parse_depends("**Depends on** E10; `evida-asr` (INT-asr), one:E18"), [(None, "E10"), ("one", "E18")])
+        # ranges and joined IDs count for every epic they name
+        self.assertEqual(parse_depends("**Depends on** E07 (pages and panels), E20 and E21 (branches) (amended A-44), E00"),
+                         [(None, "E07"), (None, "E20"), (None, "E21"), (None, "E00")])
+        self.assertEqual(parse_depends("**Depends on** E02 to E07"), [(None, f"E0{n}") for n in range(2, 8)])
+        self.assertEqual(parse_depends("**Depends on** E00–E02, E04–E06 and E16 (released; amended A-13)"),
+                         [(None, e) for e in ("E00", "E01", "E02", "E04", "E05", "E06", "E16")])
+        self.assertEqual(parse_depends("**Depends on** one:E01 to E03 & desk:E05, E08-E09, E10 through E11/E14 + E15"),
+                         [("one", "E01"), ("one", "E02"), ("one", "E03"), ("desk", "E05"), (None, "E08"), (None, "E09"),
+                          (None, "E10"), (None, "E11"), (None, "E14"), (None, "E15")])
+        # a story ID, a dash before prose, "to" in a sentence: no range
+        self.assertEqual(parse_depends("**Depends on** E01-S02 (the API), E05 - the shell, E06 to be confirmed"),
+                         [(None, "E01"), (None, "E05"), (None, "E06")])
         rows, errors = parse_repo_table(REPO_TABLE.replace("| 1 |", "| 2 |", 1).replace("| `app` | 2 |", "| `app` | 1 |"))
         self.assertEqual(([r["name"] for r in rows], errors), (["app", "core"], []))
         self.assertEqual(parse_repo_table("**Repositories** Order: `core`.")[1], ["the **Repositories** field is not a table (run `blueprint.py migrate`)"])
+
+    def test_epic_order_table(self):
+        from speckit_blueprint.model import Blueprint
+
+        def order(text):
+            return Blueprint(Path("BLUEPRINT.md"), text).epic_order()
+
+        head = "| Order | Epic | Goal |\n|---|---|---|\n"
+        self.assertEqual(order("## 16. Delivery plan\n\n" + head + "| 2 | E01 Sales | x |\n| 1 | `E00` Foundation | x |\n"
+                               "| — | E09 Later | x |\n| 3 | Epic 05 — Shell | x |\n| 3 | E06, E07 Two at once | x |\n"
+                               "| 4 | E17 Fixes (after E16) | x |\n| 5 | E01 again | x |\n\nAfter the table.\n| 6 | E08 | x |\n"),
+                         [0, 1, 5, 6, 7, 17, 9])
+        self.assertIsNone(order("| Rank | Epic |\n|---|---|\n| 1 | E00 |\n"))  # no Order column
+        self.assertIsNone(order("| Order | Repository |\n|---|---|\n| 1 | core |\n"))  # an epic's Repositories table
+        self.assertIsNone(order("```\n" + head + "| 1 | E00 | x |\n```\n"))  # a format example
+        self.assertIsNone(order("E00, then E01.\n"))
 
 
 class MetricsTest(ProjectTest):
