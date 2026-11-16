@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.5 — 2026-11-16
+
+Metrics: agent time is the agent's time in its turns. The time between turns, and the wait for an answer
+to its questions, are no longer counted as work.
+
+- Once a session's first message had been read, every stretch until the next entry in its transcript
+  counted as the agent at work, unless the entry was a typed message. Claude Code writes plenty between
+  turns: the stop hook's record, links, file snapshots, and in the desktop app a queue operation for each
+  message before it is read. So the 16 h from a stop hook's record to the queued next message counted as
+  16 h of agent time. One epic recorded a single 63 h stretch and a session with no epic 200 h; one
+  project's 112 sessions added up to 883 h of agent time, which read again are 127 h. A turn now ends at
+  the model's last answer (`end_turn`), the stop hook's record (`stop_hook_summary`) or an interruption.
+  Nothing Claude Code writes after that counts. The time until the user's next message is waiting, up to
+  4 h as before, and that message is a human gate.
+- A question (`AskUserQuestion`, `ExitPlanMode`) waits for the user. The time to its answer counted as
+  tool time: 8 h for a question answered the next morning. It is waiting now (up to 4 h), and a human gate.
+- Inside a turn, a stretch of more than 30 minutes in which neither the session nor its subagents wrote
+  anything is idle: requests that hung for 2 to 3 h counted as model time. A subagent that runs longer
+  keeps counting while it writes. A command with nothing written for more than 30 minutes does not count.
+  The longest real tool calls measured ran 12 min, so a limit of a few minutes would drop real work.
+- A background task's report (`<task-notification>`) is not a human gate. The time from the end of the
+  turn to the report is the agent's tool time (it waited for its own task), split the same way. A
+  scheduled task is no one's message, and the time before it is idle. An interruption is not a prompt.
+  Neither is a compaction's summary, which carries the time of the conversation it summarises and set the
+  clock back hours.
+- Tool time is the time a tool call runs, counted once for calls made together. It never includes the
+  wait for an answer or an idle stretch, and neither does a repository's tool time.
+- The dashboard showed a session as "Thinking" once anything followed the stop hook's record, and an open
+  question as a running tool. Both now show "Waiting for you", since the end of the turn or the question.
+- After updating, run `blueprint.py metrics --backfill` once: it reads every recorded session again with
+  these rules. Cost does not change: it comes from tokens.
+- The package's `__version__` said 0.5.3 in 0.5.4.
+
 ## 0.5.4 — 2026-11-16
 
 Metrics: work counts for the active feature only, and a cost no session recorded is unknown, not $0.00.

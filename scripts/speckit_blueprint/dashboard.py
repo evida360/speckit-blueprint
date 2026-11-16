@@ -21,7 +21,8 @@ from .model import Blueprint
 from .repos import facts, main_root, registry
 from .board import live, load as load_board
 from .status import project_status
-from .metrics import Ctx, collect, combine, parse_ts, tail_entries, transcript_dir
+from .metrics import (GATE_TOOLS, Ctx, collect, combine, ends_turn, parse_ts, tail_entries, tool_results, tool_uses,
+                      transcript_dir, turn_event)
 from .estimate import epic_acs, estimate, history
 from .units import cost as fmt_cost, duration
 
@@ -123,34 +124,42 @@ def epic_entry(root: Path, cfg: dict, bcfg: dict, bp: Blueprint, e: dict, row: d
 
 
 def activity(transcript: Path) -> dict:
-    """What a live session is doing now, from the end of its transcript."""
+    """What a live session is doing now, from the end of its transcript: a tool, the model ("thinking"), or
+    waiting for you, since its turn ended or since it asked you something (AskUserQuestion, ExitPlanMode).
+    What Claude Code writes between turns (queue operations, links) changes nothing."""
     entries = [e for e in tail_entries(transcript) if parse_ts(e.get("timestamp"))]
     if not entries:
         return {}
-    last = entries[-1]
     now = time.time()
     model = next(((e.get("message") or {}).get("model") for e in reversed(entries) if e.get("type") == "assistant"), None)
     effort = next((e.get("effort") for e in reversed(entries) if e.get("type") == "assistant" and e.get("effort")), None)
-    open_tools = {}
+    open_tools: dict = {}
+    since, ended = parse_ts(entries[-1]["timestamp"]), False
     for e in entries:
-        content = (e.get("message") or {}).get("content")
-        for c in content if isinstance(content, list) else []:
-            if not isinstance(c, dict):
-                continue
-            if c.get("type") == "tool_use":
-                open_tools[c.get("id")] = (c, parse_ts(e["timestamp"]))
-            elif c.get("type") == "tool_result":
-                open_tools.pop(c.get("tool_use_id"), None)
-    out = {"model": model, "effort": effort, "last_at": iso(parse_ts(last["timestamp"]))}
-    if open_tools:
+        ev = turn_event(e)
+        t = parse_ts(e["timestamp"])
+        if not ev or (ended and (ev == "busy" or (ev in ("work", "end") and t <= since))):
+            continue  # nothing, or a late record of the turn that ended
+        if ev in ("prompt", "notice", "wake", "end"):
+            open_tools.clear()
+        if ev == "work" and e.get("type") == "assistant" and not e.get("isSidechain"):
+            for c in tool_uses(e):
+                open_tools[c.get("id")] = (c, t)
+        for c in tool_results(e):
+            open_tools.pop(c.get("tool_use_id"), None)
+        since, ended = t, ev == "end" or ends_turn(e)
+    out = {"model": model, "effort": effort, "last_at": iso(parse_ts(entries[-1]["timestamp"]))}
+    asked = [x for x in open_tools.values() if x[0].get("name") in GATE_TOOLS]
+    if asked:
+        c, t = asked[-1]
+        out.update(kind="waiting", tool=c.get("name"), since=iso(t), for_s=round(now - t))
+    elif open_tools:
         c, t = list(open_tools.values())[-1]
         inp = c.get("input") or {}
         what = inp.get("command") or inp.get("file_path") or inp.get("description") or inp.get("pattern") or ""
         out.update(kind="tool", tool=c.get("name"), detail=str(what)[:120], since=iso(t), for_s=round(now - t))
-    elif last.get("type") == "assistant" or (last.get("type") == "system" and last.get("subtype") == "stop_hook_summary"):
-        out.update(kind="waiting", since=iso(parse_ts(last["timestamp"])), for_s=round(now - parse_ts(last["timestamp"])))
     else:
-        out.update(kind="thinking", since=iso(parse_ts(last["timestamp"])), for_s=round(now - parse_ts(last["timestamp"])))
+        out.update(kind="waiting" if ended else "thinking", since=iso(since), for_s=round(now - since))
     return out
 
 

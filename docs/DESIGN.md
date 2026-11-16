@@ -249,8 +249,19 @@ the Claude Code version, and is tested on fixtures.
 - Sessions the `stop` event never saw (recorded before 0.5.4, or transcripts `--backfill` reads): the
   board's last record of the session's active feature, when it has one; otherwise compiles, activates,
   Spec Kit's reports and writes into a feature folder (tasks.md ticks, review.md).
-- Time split per turn: tool time (tool call to its result), model time (the rest of the turn), waiting
-  (end of turn to the next user message, up to 4h), idle (anything longer, and gaps between sessions).
+- Turns: a turn starts at a message (the user's, or the report of a background task the session started)
+  and ends at the model's last answer (`end_turn`), the stop hook's record (`stop_hook_summary`) or an
+  interruption. What Claude Code writes between turns (queue operations, links, file snapshots, a
+  compaction's summary dated back to the conversation it summarises) is no work and moves nothing. A turn
+  that goes on without a message (a stop hook sent the agent on) starts at its next answer.
+- Time split: tool time (while a tool call runs, once for calls made together), model time (the rest of
+  the turn), waiting for the user (end of turn to the user's next message, and a question,
+  `AskUserQuestion` or `ExitPlanMode`, to its answer: up to 4h each, each a human gate), idle (anything
+  longer, gaps between sessions, and inside a turn a stretch of more than 30 min in which neither the
+  session nor its subagents wrote anything). After a turn, the wait for a background task up to its report
+  is tool time, split the same way; the time before a scheduled task's wake-up is idle. Measured on 112
+  sessions: tool calls ran up to 12 min and answers took up to 8 min with nothing written; the longer
+  stretches were requests that hung for hours.
 - Stories: task ticks arrive in batches (measured: up to 19 tasks in 30 s), so durations are measured per
   tick batch and reported per story, never per task. Ticks are listed with their time.
 - Repositories: tool calls are attributed by path (repository and worktree paths) and by `cd`/`-C` in
@@ -271,9 +282,10 @@ Units are formatted in one place: `2h 5m`, `45m`, `38s`, `1d 4h`, `$3.10`, `2.4M
 ## Estimates
 
 - Size, known before building: ACs, stories, edge cases, task seeds, repositories, contracts, IDs by type.
-- Rates from finished epics: agent time, cost, tokens and calendar time per AC; human gates per story. A
-  cost comes only from the finished epics that have one; when none has, cost ranges are `null` ("cost
-  unknown"), not zero.
+- Rates from finished epics, of every blueprint in the project (so a blueprint none of whose epics is
+  finished has estimates from the others): agent time, cost, tokens and calendar time per AC; human gates
+  per story. A cost comes only from the finished epics that have one; when none has, cost ranges are
+  `null` ("cost unknown"), not zero.
 - An epic's estimate is a P50–P90 range of rate × ACs. The remaining project is a seeded Monte Carlo over
   the remaining epics; the finish date schedules them, in status's delivery order, on the `Depends on`
   graph with the parallelism observed so far. Fewer than three finished epics: the range is marked low
@@ -291,7 +303,7 @@ ranges; where each epic's time went; a per-repository view. A blueprint selector
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.4 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.5 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds

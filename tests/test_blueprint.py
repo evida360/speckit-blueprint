@@ -141,16 +141,22 @@ class Transcript:
     def base(self, at):
         return {"timestamp": self.ts(at), "sessionId": self.sid, "cwd": str(self.root), "version": "2.1.306"}
 
-    def prompt(self, at, text):
-        self.lines.append({**self.base(at), "type": "user", "message": {"role": "user", "content": text}})
+    def prompt(self, at, text, **extra):
+        self.lines.append({**self.base(at), "type": "user", "message": {"role": "user", "content": text}, **extra})
 
-    def assistant(self, at, content, effort=None, model=None):
+    def record(self, at, kind, **fields):
+        """What Claude Code writes besides the conversation: queue operations, links, hook summaries."""
+        self.lines.append({**self.base(at), "type": kind, **fields})
+
+    def assistant(self, at, content, effort=None, model=None, stop=None):
         self.lines.append({**self.base(at), "type": "assistant", "effort": effort or self.effort,
-                           "message": {"model": model or self.model, "content": content,
+                           "message": {"model": model or self.model, "content": content, **({"stop_reason": stop} if stop else {}),
                                        "usage": {"input_tokens": 2, "output_tokens": 100, "cache_read_input_tokens": 20000,
                                                  "cache_creation_input_tokens": 500}}})
 
-    def tool(self, at, name, inp, done_at, agent=None, output="ok", error=False):
+    def tool(self, at, name, inp, done_at, agent=None, output="ok", error=False, agent_times=None, background=False):
+        """A tool call and its result. `agent`: (id, type, effort) of the subagent it ran, which writes at
+        `agent_times` (one second after the call by default); `background`: it runs on after the result."""
         tid = f"toolu_{self.sid}_{self.n}"
         self.n += 1
         self.assistant(at, [{"type": "tool_use", "id": tid, "name": name, "input": inp}])
@@ -160,16 +166,25 @@ class Transcript:
         result = {**self.base(done_at), "type": "user", "message": {"role": "user", "content": [res]}}
         if agent:
             agent_id, agent_type, level = agent
-            result["toolUseResult"] = {"agentId": agent_id, "agentType": agent_type, "totalDurationMs": int((done_at - at) * 1000), "status": "completed"}
+            result["toolUseResult"] = ({"agentId": agent_id, "status": "async_launched", "isAsync": True} if background else
+                                       {"agentId": agent_id, "agentType": agent_type, "totalDurationMs": int((done_at - at) * 1000), "status": "completed"})
             sub = self.dir / self.sid / "subagents"
             sub.mkdir(parents=True, exist_ok=True)
-            entry = {**self.base(at + 1), "type": "assistant", "effort": level, "message": {"model": self.model, "content": [{"type": "text", "text": "ok"}],
-                     "usage": {"input_tokens": 10, "output_tokens": 4000, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 9000}}}
-            (sub / f"agent-{agent_id}.jsonl").write_text(json.dumps(entry) + "\n")
+            entries = [{**self.base(x), "type": "assistant", "effort": level, "message": {"model": self.model, "content": [{"type": "text", "text": "ok"}],
+                        "usage": {"input_tokens": 10, "output_tokens": 4000, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 9000}}}
+                       for x in agent_times or [at + 1]]
+            (sub / f"agent-{agent_id}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in entries))
         self.lines.append(result)
 
-    def say(self, at, text="done"):
-        self.assistant(at, [{"type": "text", "text": text}])
+    def result(self, at, tid, output="ok"):
+        self.lines.append({**self.base(at), "type": "user",
+                           "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": output}]}})
+
+    def say(self, at, text="done", end=False):
+        """An answer; `end`: the last of the turn (the model stopped), followed by the stop hook's record."""
+        self.assistant(at, [{"type": "text", "text": text}], stop="end_turn" if end else None)
+        if end:
+            self.record(at, "system", subtype="stop_hook_summary", hookCount=1, preventedContinuation=False)
 
     def cost(self, usd):
         self.lines.append({"type": "cost-state", "sessionId": self.sid, "totalCostUSD": usd})
@@ -1764,6 +1779,111 @@ class MetricsTest(ProjectTest):
         self.assertEqual((out["sessions"], out["sessions_with_blueprint_work"]), (3, 2))
         m = self.json_cli("metrics", "E00")["metrics"]
         self.assertEqual((m["sessions"], m["agent_s"]), (2, 70.0))
+
+    def metrics_of(self, tr):
+        tr.write()
+        self.stop(tr)
+        return self.json_cli("metrics", "E00")["metrics"]
+
+    def test_the_time_between_turns_is_not_agent_time(self):
+        # What Claude Code writes between turns (queue operations, the stop hook's record, links, snapshots)
+        # is no work: a user who comes back 16 h later kept the agent waiting (up to 4 h), not working
+        tr = Transcript(self.tmp, "b1", start_offset=-86400)
+        human = {"origin": {"kind": "human"}}
+        later = 80 + 16 * 3600
+        tr.record(0, "queue-operation", operation="enqueue", content="/speckit-implement")
+        tr.record(0, "queue-operation", operation="dequeue")
+        tr.prompt(0, "/speckit-implement", **human)
+        tr.record(1, "api-request", querySource="sdk")
+        tr.tool(5, "Bash", {"command": "npm test"}, 65)
+        tr.say(80, end=True)
+        tr.record(82, "frame-link", title="E00 progress")
+        tr.record(later, "queue-operation", operation="enqueue", content="go on")
+        tr.record(later, "queue-operation", operation="dequeue")
+        tr.prompt(later, "go on", **human)
+        tr.tool(later + 10, "Read", {"file_path": str(self.f0 / "spec.md")}, later + 12)
+        tr.say(later + 20, end=True)
+        # a compaction's summary carries the time of the conversation it summarises
+        tr.prompt(30, "This session is being continued from a previous conversation.", isCompactSummary=True)
+        tr.record(later + 3600, "file-history-delta", messageId="m1")
+        # the user interrupts a turn, and comes back 3 h later
+        tr.prompt(later + 7320, "fix the check", **human)
+        tr.tool(later + 7330, "Bash", {"command": "npm run check"}, None)
+        tr.prompt(later + 7350, [{"type": "text", "text": "[Request interrupted by user]"}])
+        tr.record(later + 7350 + 3 * 3600, "queue-operation", operation="enqueue", content="again")
+        tr.prompt(later + 7350 + 3 * 3600, "again", **human)
+        tr.say(later + 7360 + 3 * 3600, end=True)
+        m = self.metrics_of(tr)
+        self.assertEqual((m["agent_s"], m["tool_s"], m["model_s"]), (140.0, 82.0, 58.0))
+        self.assertEqual((m["wait_s"], m["gates"], m["turns"]), (4 * 3600 + 7300 + 3 * 3600, 3, 4))
+
+    def test_a_question_waits_for_the_user(self):
+        # From AskUserQuestion or ExitPlanMode to the answer, the agent waits for the user: a human gate,
+        # not tool time; a tool call made with the question finishes inside that wait
+        tr = Transcript(self.tmp, "q1", start_offset=-86400)
+        tr.prompt(0, "/speckit-implement")
+        tr.assistant(10, [{"type": "tool_use", "id": "ask1", "name": "AskUserQuestion", "input": {"questions": []}},
+                          {"type": "tool_use", "id": "read1", "name": "Read", "input": {"file_path": str(self.f0 / "spec.md")}}])
+        tr.result(11, "read1")
+        tr.record(12, "queue-operation", operation="enqueue", content="also check the copy")
+        answer = 10 + 8 * 3600
+        tr.result(answer, "ask1", "User answered: yes")
+        tr.tool(answer + 10, "Bash", {"command": "npm test"}, answer + 70)
+        tr.tool(answer + 80, "ExitPlanMode", {"plan": "Build E00"}, answer + 680)
+        tr.say(answer + 690, end=True)
+        m = self.metrics_of(tr)
+        self.assertEqual((m["agent_s"], m["tool_s"]), (100.0, 60.0))
+        self.assertEqual((m["wait_s"], m["gates"]), (4 * 3600 + 600, 2))
+
+    def test_idle_stretches_and_background_work(self):
+        # Inside a turn, more than 30 min in which neither the session nor its subagents wrote anything is
+        # idle. A background task the agent waited for after its turn is its tool time; a scheduled task
+        # is no one's message: the time before it is idle
+        tr = Transcript(self.tmp, "i1", start_offset=-86400)
+        tr.prompt(0, "/speckit-implement")
+        tr.record(1, "api-request", querySource="sdk")
+        tr.say(7201)  # the request hung for 2 h
+        tr.tool(7210, "Agent", {"description": "Review E00"}, 9610, agent=("ag1", "general-purpose", "high"),
+                agent_times=[7211, 7811, 8411, 9011, 9600])  # a subagent at work for 40 min
+        tr.tool(9620, "Bash", {"command": "make build"}, 12020)  # 40 min with nothing written
+        tr.tool(12030, "Agent", {"description": "Explore", "run_in_background": True}, 12031,
+                agent=("ag2", "Explore", "high"), agent_times=[12032, 12632, 13232], background=True)
+        tr.say(12040, end=True)
+        tr.prompt(13540, "<task-notification>\n<task-id>ag2</task-id>\n<status>completed</status>\n</task-notification>",
+                  origin={"kind": "task-notification", "producer": "agent"})
+        tr.say(13550, end=True)
+        tr.prompt(24350, '<scheduled-task name="ci">Check CI</scheduled-task>',
+                  origin={"kind": "task-notification", "subkind": "scheduled-task", "fireReason": "schedule"})
+        tr.say(24360, end=True)
+        tr.prompt(24960, "thanks")
+        tr.say(24970, end=True)
+        m = self.metrics_of(tr)
+        # 2400 s of the subagent's run, 1500 s waiting for the background one, 1 s launching it; 69 s of answers
+        self.assertEqual((m["agent_s"], m["tool_s"]), (3970.0, 3901.0))
+        self.assertEqual((m["wait_s"], m["gates"], m["turns"]), (600.0, 1, 2))
+        self.assertEqual(m["subagents"]["general-purpose"]["runs"], 1)
+
+    def test_live_activity(self):
+        from speckit_blueprint.dashboard import activity
+        from speckit_blueprint.metrics import iso
+
+        tr = Transcript(self.tmp, "l1", start_offset=-600)
+        tr.prompt(0, "go")
+        self.assertEqual(activity(tr.write(live=True))["kind"], "thinking")
+        tr.tool(10, "Bash", {"command": "npm test"}, None)
+        self.assertEqual(activity(tr.write(live=True))["tool"], "Bash")
+        tr.result(70, "toolu_l1_0")
+        tr.tool(80, "AskUserQuestion", {"questions": []}, None)
+        now = activity(tr.write(live=True))
+        self.assertEqual((now["kind"], now["tool"], now["since"]), ("waiting", "AskUserQuestion", iso(tr.t0 + 80)))
+        tr.result(200, "toolu_l1_1", "User answered: yes")
+        tr.say(210, end=True)
+        tr.record(211, "frame-link", title="E00 progress")
+        tr.record(300, "queue-operation", operation="enqueue", content="next")
+        now = activity(tr.write(live=True))
+        self.assertEqual((now["kind"], now["since"]), ("waiting", iso(tr.t0 + 210)))
+        tr.prompt(300, "next")
+        self.assertEqual(activity(tr.write(live=True))["kind"], "thinking")
 
     def test_an_unknown_cost_is_not_zero(self):
         self.add_epic_02()

@@ -11,6 +11,13 @@ no epic when that feature was not compiled from a blueprint: reading an epic's f
 make the work its. The hook records the active feature at the end of every turn; a compile or activate the
 session ran, or Spec Kit's report of the active feature (check-prerequisites), marks the moment it changed.
 
+Time is the agent's time in its turns. A turn runs from a message (the user's, or a background task's
+report) to the model's last answer, the stop hook's record or an interruption; what Claude Code writes
+between turns (queue operations, links, file snapshots) is no work. From the end of a turn to the user's
+next message, and from a question (AskUserQuestion, ExitPlanMode) to its answer, the agent waits for the
+user. Inside a turn, a stretch of more than IDLE_GAP_S in which neither the session nor its subagents wrote
+anything is idle: a request that hung, a machine asleep.
+
 Transcripts are Claude Code's own record, not a public API: every field is read defensively and the
 Claude Code version is kept with each summary.
 """
@@ -33,6 +40,11 @@ from .board import load as load_board, state_dir
 from .units import cost as fmt_cost, duration, tokens as fmt_tokens
 
 WAIT_CAP_S = 4 * 3600
+# Measured on 112 sessions: tool calls ran up to 12 min and answers took up to 8 min with nothing written
+# meanwhile; the stretches longer than 30 min were requests that hung for hours
+IDLE_GAP_S = 30 * 60
+GATE_TOOLS = ("AskUserQuestion", "ExitPlanMode")  # calls that wait for the user's answer
+END_REASONS = ("end_turn", "stop_sequence", "refusal")  # the model's answer ends the turn
 TICK_BATCH_S = 60
 WEIGHTS = {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0}
 PHASE_RE = re.compile(r"speckit-(?:blueprint-)?(discover|amend|compile|tasks|analyze|implement|review)\b")
@@ -246,13 +258,40 @@ def read_jsonl(path: Path) -> list:
     return out
 
 
-def is_prompt(e: dict) -> bool:
-    if e.get("type") != "user" or e.get("isMeta") or e.get("isSidechain"):
-        return False
-    content = (e.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return True
-    return isinstance(content, list) and not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content)
+def turn_event(e: dict) -> str:
+    """What an entry says about the agent's time. A turn starts at "prompt" (a message the user typed),
+    "notice" (a background task the session started reports back) or "wake" (a message nobody typed: a
+    scheduled task, another session) and ends at "end" (the stop hook ran, the user interrupted) or at an
+    answer that ends it (`ends_turn`). "work" (the agent's messages and tool results) and "busy" (requests,
+    retries, a subagent's messages in older transcripts) show the agent at work; "work" after the end of a
+    turn starts another (a stop hook sent the agent on). Anything else ("": queue operations, links, file
+    snapshots, attachments, a compaction's summary) says nothing about the agent's time."""
+    typ = e.get("type")
+    if typ in ("assistant", "user") and e.get("isSidechain"):
+        return "busy"
+    if typ == "assistant":
+        return "work"
+    if typ == "user":
+        if tool_results(e):
+            return "work"
+        if e.get("isMeta") or e.get("isCompactSummary"):
+            return ""
+        text = text_of(e).lstrip()
+        if text.startswith("[Request interrupted by user"):
+            return "end"
+        if text.startswith("<task-notification>"):
+            return "notice"
+        origin = e.get("origin")
+        return "wake" if isinstance(origin, dict) and origin.get("kind") in ("task-notification", "peer") else "prompt"
+    if typ == "system":
+        sub = e.get("subtype")
+        return "end" if sub in ("stop_hook_summary", "turn_duration") else "busy" if sub == "api_error" else ""
+    return "busy" if typ in ("api-request", "progress") else ""
+
+
+def ends_turn(e: dict) -> bool:
+    return (e.get("type") == "assistant" and not e.get("isSidechain")
+            and (e.get("message") or {}).get("stop_reason") in END_REASONS)
 
 
 def text_of(e: dict) -> str:
@@ -265,10 +304,15 @@ def text_of(e: dict) -> str:
 
 
 def subagent_usage(transcript: Path, session_id: str, agent_id: str) -> dict:
-    """Tokens, models and effort levels of one subagent run."""
+    """Tokens, models and effort levels of one subagent run, and when its messages were written."""
     path = transcript.parent / session_id / "subagents" / f"agent-{agent_id}.jsonl"
-    out = {"tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, "models": {}, "efforts": {}}
+    out = {"tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, "models": {}, "efforts": {},
+           "times": []}
     for e in read_jsonl(path):
+        if e.get("type") in ("assistant", "user"):
+            t = parse_ts(e.get("timestamp"))
+            if t is not None:
+                out["times"].append(t)
         if e.get("type") != "assistant":
             continue
         msg = e.get("message") or {}
@@ -305,19 +349,20 @@ def load_summary(root: Path, session_id: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def change_points(events: list, seen: list, prompts: list) -> list:
+def change_points(events: list, seen: list, turns: list) -> list:
     """Where the active feature changed, as (time, key, seen) in order. A compile or activate changes it at
     its time. An observation at the end of a turn that differs from what is known changes it from the
-    start of that turn, since the transcript does not show where. The first point also covers the time
-    before it: as known when it is an observation (nothing changed before it), as a guess when it is a
-    compile (a session that starts by compiling an epic is getting that epic ready)."""
+    start of that turn (`turns`: when each turn started), since the transcript does not show where. The
+    first point also covers the time before it: as known when it is an observation (nothing changed
+    before it), as a guess when it is a compile (a session that starts by compiling an epic is getting
+    that epic ready)."""
     points: list = []
     last_seen = None
     for t, kind, key in sorted([(t, 0, k) for t, k in events] + [(t, 1, k) for t, k in seen], key=lambda x: (x[0], x[1])):
         at = t
         if kind == 1 and points and points[-1][1] != key:
             after = max(points[-1][0], last_seen if last_seen is not None else points[-1][0])
-            starts = [p for p in prompts if after < p <= t]
+            starts = [p for p in turns if after < p <= t]
             at = starts[-1] if starts else after + 1e-6
         if not points or points[-1][1] != key:
             points.append((at, key, kind == 1))
@@ -364,7 +409,7 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
     pre: list = []  # per timed entry: (phase, stretch) before its own changes
     post: list = []  # and after them
     events: list = []
-    prompts: list = []
+    turns: list = []  # when each turn started
     acts: dict = {}  # Bash tool_use id -> a compile or activate, or a Spec Kit script that reports the feature
 
     def to_phase(new: str) -> None:
@@ -375,9 +420,10 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
     for e in timed:
         t = parse_ts(e.get("timestamp"))
         pre.append((phase, stretch))
-        if is_prompt(e):
-            prompts.append(t)
-            m = PHASE_RE.search(text_of(e))
+        ev = turn_event(e)
+        if ev in ("prompt", "notice", "wake"):
+            turns.append(t)
+            m = PHASE_RE.search(text_of(e)) if ev == "prompt" else None
             if m:
                 to_phase(PHASE_OF[m.group(1)])
         elif e.get("type") == "assistant":
@@ -407,7 +453,7 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
                         events.append((t, key))
         post.append((phase, stretch))
 
-    points = change_points(events, [(t, ctx.active_key(f, worktree)) for t, f in seen], prompts)
+    points = change_points(events, [(t, ctx.active_key(f, worktree)) for t, f in seen], turns)
     times = [p[0] for p in points]
 
     def key_of(state: tuple, t: float) -> str:
@@ -422,21 +468,49 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
 
     # Pass 2: time, tokens, tools and ticks, each to the key of its moment
     per: dict = {}
-    tools: dict = {}  # tool_use id -> (key, start, repo, name)
+    tools: dict = {}  # tool_use id -> (key, the active clock at the call, repo, name)
     session_cost = None
     covered: dict = {}  # key -> weighted tokens the session's cost record covers
-    in_turn = False
-    prev_t = None
+    subs: dict = {}  # agentId -> the subagent's tokens, models, effort levels and when it wrote
+    for e in timed:
+        res = e.get("toolUseResult")
+        if isinstance(res, dict) and res.get("agentId") and str(res["agentId"]) not in subs:
+            subs[str(res["agentId"])] = subagent_usage(transcript, session_id, str(res["agentId"]))
+    evidence = sorted(x for s in subs.values() for x in s["times"])  # subagents at work while the session is quiet
+    in_turn, last, ended = False, None, None  # in a turn; the time accounted for; when the last turn ended
+    pending: dict = {}  # tool calls in flight: id -> name
+    asked: set = set()  # questions waiting for the user's answer (GATE_TOOLS)
+    asked_at = 0.0  # when the first of them was asked
+    clock = 0.0  # active seconds so far: a tool call's time is how far it moves during the call
     i = -1
 
     def agg(key: str) -> dict:
         return per.setdefault(key, new_agg())
 
+    def work(key: str, s: float, e_: float, ph: str, tool: bool) -> None:
+        """[s, e_] is the agent's time, but for stretches of more than IDLE_GAP_S in which neither the
+        session nor its subagents wrote anything: those are idle."""
+        nonlocal clock
+        cuts = evidence[bisect.bisect_right(evidence, s):bisect.bisect_left(evidence, e_)]
+        for x, y in zip([s] + cuts, cuts + [e_]):
+            if 0 < y - x <= IDLE_GAP_S:
+                credit(key, "active", (x, y, ph, tool))
+                clock += y - x
+
+    def answered(t: float, state: tuple) -> None:
+        """The open questions are over: since the first was asked, the agent waited for the user."""
+        nonlocal last
+        agg(key_of(state, asked_at))["wait_s"] += min(max(0.0, t - asked_at), WAIT_CAP_S)
+        asked.clear()
+        last = max(last or t, t)
+
     def credit(key: str, kind: str, payload) -> None:
         a = agg(key)
         if kind == "active":
-            s, e_, ph = payload
+            s, e_, ph, tool = payload
             a["active_s"] += e_ - s
+            if tool:
+                a["tool_s"] += e_ - s
             bump(a["phases"], ph, e_ - s)
             if a["intervals"] and abs(a["intervals"][-1][1] - s) < 1:
                 a["intervals"][-1][1] = e_
@@ -451,7 +525,6 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
             bump(a["efforts"], effort)
         elif kind == "tool":
             repo, secs = payload
-            a["tool_s"] += secs
             if repo:
                 r = a["repos"].setdefault(repo, {"calls": 0, "tool_s": 0.0})
                 r["calls"] += 1
@@ -476,17 +549,32 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
             continue
         t = parse_ts(e.get("timestamp"))
         i += 1
-        if is_prompt(e):
-            if prev_t is not None and in_turn:
-                a = agg(key_of(pre[i], prev_t))
-                a["wait_s"] += min(max(0.0, t - prev_t), WAIT_CAP_S)
-                a["gates"] += 1
-            agg(key_of(post[i], t))["turns"] += 1
-            in_turn, prev_t = True, t
+        ev = turn_event(e)
+        # The time since `last`: waiting for the user, the agent at work, or idle
+        if ev in ("prompt", "notice", "wake"):
+            if asked:  # the user wrote instead of answering: the question's wait ends here
+                if ev == "prompt":
+                    answered(t, pre[i])
+            elif last is not None and t > last:
+                key = key_of(pre[i], last)
+                if ev == "prompt":  # since the end of the turn (or the agent's last word), waiting for the user
+                    agg(key)["wait_s"] += min(t - last, WAIT_CAP_S)
+                    agg(key)["gates"] += 1
+                elif in_turn or ev == "notice":  # after its turn, the agent waited for its background task
+                    work(key, last, t, pre[i][0], bool(pending) or not in_turn)
+            if ev == "prompt":
+                agg(key_of(post[i], t))["turns"] += 1
+            if ev == "prompt" or not in_turn:
+                pending.clear()
+            in_turn, last = True, max(last or t, t)
             continue
-        if prev_t is not None and in_turn and t > prev_t:
-            credit(key_of(pre[i], prev_t), "active", (prev_t, t, pre[i][0]))
-        prev_t = max(prev_t or t, t)
+        if ev in ("work", "busy", "end"):
+            if not in_turn:  # the agent went on by itself; or a late record of the turn that ended
+                if ev == "work" and (ended is None or t > ended):
+                    in_turn, last = True, max(last or t, t)
+            elif t > last and not asked:  # while a question is open, the wait is counted at its answer
+                work(key_of(pre[i], last), last, t, pre[i][0], bool(pending))
+                last = t
         if e.get("type") == "assistant":
             msg = e.get("message") or {}
             key = key_of(post[i], t)
@@ -494,7 +582,14 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
                 inp = c.get("input") or {}
                 path = next((str(inp.get(k)) for k in PATH_KEYS if inp.get(k)), "")
                 repo = ctx.repo_of(path or str(inp.get("command") or ""), cwd) or (ctx.hub if c.get("name") in ("Bash", "Edit", "Write", "MultiEdit", "Read") else None)
-                tools[c.get("id")] = (key, t, repo, c.get("name"))
+                tools[c.get("id")] = (key, clock, repo, c.get("name"))
+                if in_turn and ev == "work":
+                    if c.get("name") in GATE_TOOLS:
+                        asked_at = asked_at if asked else t
+                        asked.add(c.get("id"))
+                        agg(key)["gates"] += 1
+                    else:
+                        pending[c.get("id")] = c.get("name")
                 if path.endswith("tasks.md"):
                     pairs = [(inp.get("old_string") or "", inp.get("new_string") or "")] + [
                         (x.get("old_string") or "", x.get("new_string") or "") for x in inp.get("edits") or [] if isinstance(x, dict)]
@@ -508,12 +603,23 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
             credit(key, "tokens", (usage_of(msg), msg.get("model"), e.get("effort")))
         elif e.get("type") == "user":
             for c in tool_results(e):
-                if c.get("tool_use_id") in tools:
-                    key, start, repo, name = tools.pop(c["tool_use_id"])
-                    credit(key, "tool", (repo, max(0.0, t - start)))
+                tid = c.get("tool_use_id")
+                pending.pop(tid, None)
+                if tid in asked:
+                    asked.discard(tid)
+                    if not asked:
+                        answered(t, pre[i])
+                if tid in tools:
+                    key, start, repo, name = tools.pop(tid)
+                    credit(key, "tool", (repo, clock - start))
                     res = e.get("toolUseResult")
                     if name in ("Agent", "Task") and isinstance(res, dict) and res.get("agentId"):
-                        credit(key, "sub", (res.get("agentType"), subagent_usage(transcript, session_id, res["agentId"])))
+                        credit(key, "sub", (res.get("agentType"), subs[str(res["agentId"])]))
+        if in_turn and (ev == "end" or ends_turn(e)):
+            if asked:
+                answered(t, pre[i])
+            in_turn, ended = False, max(last or t, t)
+            pending.clear()
     for a in per.values():
         a["tool_s"] = min(a["tool_s"], a["active_s"])
         a["model_s"] = a["active_s"] - a["tool_s"]

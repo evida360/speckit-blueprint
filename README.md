@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.4, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.5.5, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,7 +57,7 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.4.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.5.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
@@ -217,6 +217,11 @@ subagents, task ticks and time per story. It stays in the hub's git directory un
 also writes a summary into each finished epic's folder. `blueprint.py metrics --backfill` reads the
 transcripts Claude Code still keeps.
 
+Agent time is the agent's time in its turns, from your message (or a background task's report) to its last
+answer. From the end of a turn to your next message, and from a question it asks you (`AskUserQuestion`,
+`ExitPlanMode`) to your answer, it is waiting for you: up to 4 hours each, each a human gate. Inside a
+turn, more than 30 minutes in which neither the session nor its subagents wrote anything is idle.
+
 Work counts for the feature active in the checkout (`.specify/feature.json`) at the time, and for no epic
 when that feature was not compiled from a blueprint: a session that only reads an epic's files, or names
 it, is not that epic's work. The hook notes the active feature at the end of every turn, and a compile,
@@ -226,8 +231,10 @@ session reads it); until some work has a recorded cost, cost reads "cost unknown
 
 `blueprint.py estimate` turns finished epics into per-AC rates and gives every remaining epic a P50–P90
 range of agent time, cost and calendar time, and the project a finish date that follows the `Depends on`
-graph and the parallelism seen so far. Compile records the estimate before building; the review adds
-"Estimate vs actual". Three finished epics are needed before the ranges are more than low confidence.
+graph and the parallelism seen so far. The rates come from the finished epics of every blueprint in the
+project, so a blueprint none of whose epics is finished is estimated from the others. Compile records the
+estimate before building; the review adds "Estimate vs actual". Three finished epics are needed before the
+ranges are more than low confidence.
 
 ```bash
 python3 .specify/extensions/blueprint/scripts/blueprint.py dashboard            # live, on 127.0.0.1:8765
@@ -339,7 +346,7 @@ blueprint.py migrate [--apply]              # upgrade a 0.4 project
 
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.4`).
+1. Update the extension (`specify extension add … v0.5.5`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not
@@ -356,9 +363,10 @@ Migrated with 0.5.0 already? After updating, status asks for `blueprint.py migra
 the reviews written before 0.5 and changes nothing else. An epic 0.5.0 left "changed since compile" needs
 `blueprint.py accept <epic> --note "…"`.
 
-Recorded metrics with 0.5.0 to 0.5.3? Run `blueprint.py metrics --backfill` once after updating. Those
-versions gave a session's work to the feature folders its text named, and never read a session's cost; the
-backfill reads every session again with the active feature and the cost it recorded.
+Recorded metrics with 0.5.0 to 0.5.4? Run `blueprint.py metrics --backfill` once after updating. Up to
+0.5.3 a session's work went to the feature folders its text named, and a session's cost was never read.
+Up to 0.5.4 the time between turns and the wait for an answer counted as agent time. The backfill reads
+every session again with the active feature, the cost it recorded and its turns.
 
 ## Development
 
