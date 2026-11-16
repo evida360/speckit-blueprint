@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.7 — 2026-11-17
+
+A retired epic is no longer remaining work. An amendment retires an epic by keeping its heading as a
+marker, `## Epic 08 — Retired (amended A-01)`; such an epic was still reported `not-compiled` and ready,
+`next` could pick it, and `estimate` and the dashboard counted its marker story as work left.
+
+- An epic whose title is the word `Retired`, alone or followed by a parenthesis, a colon or a dash, is
+  retired. Blueprints already retire dropped IDs this way, so the ID is never reused; a title that only
+  starts with the word (`Retired accounts cleanup`) is an ordinary epic.
+- Status reports it `retired`: never next, never blocked, with no overlay, and left out of `epic_order`
+  and of the epics done and total. A dependency on it counts as met, since it is never built; status
+  names it in `depends_on_retired` so an amendment can take it out of **Depends on**. One compiled
+  before it was retired keeps its feature folder and task counts in status.
+- `estimate` leaves retired epics out of `remaining` (epics left, agent time, cost, finish date) and of
+  the sprints; `estimate E08` says the epic is retired instead of giving a range.
+- Compile refuses a retired epic and `stale` leaves it out, so an amendment never recompiles it. The
+  amend command says how to retire an epic, and to tell the user what was built for one compiled before.
+- The dashboard lists retired epics last and muted (in a closed group after the sprints) and leaves them
+  out of progress, the AC totals, the sprints, the forecast and the "Check" item for epics in no sprint.
+  "Needs you" asks you to check an epic that still depends on a retired one. Time spent on an epic before
+  it was retired still counts as spent.
+- `blueprint.py epics` marks retired epics (`"retired": true`).
+
 ## 0.5.6 — 2026-11-17
 
 The dashboard shows the delivery plan: sprints, epic sizes and the critical path, with a forecast per

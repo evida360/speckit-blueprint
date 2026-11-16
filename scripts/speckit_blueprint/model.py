@@ -134,6 +134,7 @@ class Blueprint:
                     "id": f"E{m.group(1)}",
                     "num": int(m.group(1)),
                     "title": m.group(2),
+                    "retired": retired_title(m.group(2)),
                     "start": start,
                     "end": end,
                     "header": (start + 1, header_end),
@@ -449,6 +450,15 @@ REPO_COLUMNS = {
     "base": "base", "base branch": "base", "branch": "branch", "working branch": "branch",
     "contracts": "contracts", "contract": "contracts",
 }
+# An epic an amendment retires keeps its heading as a marker, its title the word Retired
+RETIRED_RE = re.compile(r"^[*_`]*retired[*_`]*(?:$|\s*[(:—–]|\s+-)", re.I)
+
+
+def retired_title(title: str) -> bool:
+    """An epic title that retires the epic: `Retired`, alone or followed by a parenthesis, a colon or a dash
+    (`Retired (amended A-01)`, `Retired: replaced by E12`, `Retired — …`). A title that only starts with
+    the word (`Retired accounts cleanup`) names an ordinary epic."""
+    return bool(RETIRED_RE.match(title.strip()))
 
 
 EPIC_CELL_RE = re.compile(r"(?:Epic\s+|E)(\d{1,2})\b")

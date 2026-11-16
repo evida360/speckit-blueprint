@@ -2,9 +2,10 @@
 
 Size is known before building (ACs, stories, repositories); rates come from finished epics (agent time,
 cost, tokens, waiting and calendar time per AC). An epic's estimate is a P50–P90 range of rate × ACs. What
-remains is a seeded Monte Carlo over the remaining epics, scheduled on their `Depends on` graph with the
-parallelism seen so far. Fewer than three finished epics: low confidence. A cost no session recorded is
-unknown, never zero: cost ranges come from the finished epics with a cost, or are None.
+remains is a seeded Monte Carlo over the remaining epics (neither done nor retired), scheduled on their
+`Depends on` graph with the parallelism seen so far. Fewer than three finished epics: low confidence. A
+cost no session recorded is unknown, never zero: cost ranges come from the finished epics with a cost, or
+are None.
 """
 
 from __future__ import annotations
@@ -122,7 +123,9 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
     conf = confidence(len(rates))
     if epic is not None:
         out = {"blueprint_id": bid, "epic": epic["id"], "acs": epic_acs(epic), "history": len(rates), "confidence": conf}
-        if rates:
+        if epic["retired"]:
+            out.update(retired=True, brief="retired by an amendment: never built, no estimate")
+        elif rates:
             out.update(epic_range([r for r in rates if r["epic"] != f"{bid}:{epic['id']}"] or rates, epic_acs(epic)))
             out["brief"] = (f"agent {span(*out['agent_s'])} · {cost_span(out['cost_usd'])} · "
                             f"calendar {span(*out['calendar_s'], fmt=lambda s: duration(s, True))} ({conf} confidence, {len(rates)} finished epic{'' if len(rates) == 1 else 's'})")
@@ -131,7 +134,7 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
         return out
     st = st if st is not None else project_status(root, bcfg)
     rows = {r["epic"]: r for r in st.get("epics", [])}
-    remaining = [e for e in bp.epics if rows.get(e["id"], {}).get("state") != "done"]
+    remaining = [e for e in bp.epics if not e["retired"] and rows.get(e["id"], {}).get("state") != "done"]
     result = {"blueprint_id": bid, "history": len(rates), "confidence": conf, "epics": {}}
     if not rates:
         result["remaining"] = None

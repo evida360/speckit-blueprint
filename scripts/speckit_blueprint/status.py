@@ -1,6 +1,7 @@
 """Project state per epic and the next step (DESIGN.md "Lifecycle and next step").
 
-Epic states: not-compiled, compiled, stale, tasked, in-progress, implemented, done. Overlays: `blocked`
+Epic states: not-compiled, compiled, stale, tasked, in-progress, implemented, done, and retired (an
+amendment retired it: never next, never blocked, and a dependency on it counts as met). Overlays: `blocked`
 (a dependency is not done in this checkout), `elsewhere` (another worktree of the hub builds it) and
 `started` (not compiled here, but its hub branch exists here or on a remote: in progress on that branch,
 or merged into the base without this checkout having it).
@@ -86,6 +87,12 @@ def epic_row(root: Path, cfg: dict, bp: Blueprint, e: dict) -> dict:
            "depends": [f"{b}:{x}" if b else x for b, x in e["depends"]]}
     if e["repos"]:
         row["repositories"] = [r["name"] for r in e["repos"]]
+    if e["retired"]:
+        row["state"] = "retired"
+        if d is not None:  # compiled before the amendment retired it: what was built is the user's to decide
+            total, done = task_counts(d / "tasks.md")
+            row.update(feature_directory=d.relative_to(root).as_posix(), tasks_total=total, tasks_done=done)
+        return row
     if d is None:
         row["state"] = "not-compiled"
         return row
@@ -158,6 +165,24 @@ def dependency_done(root: Path, cfg: dict, dep: str, rows: dict) -> bool:
     return rv == "DONE" and (not missing or before_0_5(d, trace))
 
 
+def retired_dependency(root: Path, cfg: dict, dep: str, rows: dict, cache: dict) -> bool:
+    """The dependency names an epic its blueprint retires. It counts as met, since it is never built, and
+    status reports it so an amendment can drop it. `cache`: blueprint id → the epics it retires."""
+    other, sep, eid = dep.partition(":")
+    if not sep:
+        return rows.get(other, {}).get("state") == "retired"
+    try:
+        bid = resolve_id(cfg, other)
+    except Exception:  # noqa: BLE001 - an unknown blueprint retires nothing
+        return False
+    if bid == cfg["id"]:
+        return rows.get(eid, {}).get("state") == "retired"
+    if bid not in cache:
+        path = root / bp_config(cfg, bid)["blueprint_path"]
+        cache[bid] = {e["id"] for e in Blueprint(path).epics if e["retired"]} if path.is_file() else set()
+    return eid in cache[bid]
+
+
 def own_dependencies(cfg: dict, epic: dict) -> list[str]:
     """The epic's dependencies in its own blueprint: `E08`, or `desk:E08` written in desk's blueprint."""
     out = []
@@ -176,12 +201,13 @@ def delivery_order(cfg: dict, bp: Blueprint, rows: dict) -> dict:
     """The order `next` takes the epics in: the delivery plan's epic order table when the blueprint has one
     (the epics it leaves out follow, in blueprint order), otherwise blueprint order. Either way, an epic's
     dependencies in this blueprint that are not done come right before it, so an epic added at the end
-    that an earlier one waits for is built first."""
+    that an earlier one waits for is built first. Retired epics are never built, so they are not in it."""
     table = bp.epic_order()
-    ids = {e["num"]: e["id"] for e in bp.epics}
+    live = [e for e in bp.epics if rows[e["id"]]["state"] != "retired"]
+    ids = {e["num"]: e["id"] for e in live}
     base = [ids[n] for n in table or [] if n in ids]
-    base += [e["id"] for e in bp.epics if e["id"] not in base]
-    deps = {e["id"]: [d for d in own_dependencies(cfg, e) if d in rows] for e in bp.epics}
+    base += [e["id"] for e in live if e["id"] not in base]
+    deps = {e["id"]: [d for d in own_dependencies(cfg, e) if d in base] for e in live}
     out: list[str] = []
     seen: set = set()
 
@@ -207,7 +233,7 @@ def choose(order: list[str], rows: dict) -> tuple[dict | None, list[str]]:
     ready, waiting = [], []
     for eid in order:
         row = rows[eid]
-        if row["state"] == "done":
+        if row["state"] in ("done", "retired"):
             continue
         if row.get("elsewhere"):
             waiting.append(f"{eid} is being built in {row['elsewhere']['worktree']}")
@@ -293,15 +319,21 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
     rows = {e["id"]: epic_row(root, cfg, bp, e) for e in bp.epics}
     others = elsewhere(board, root)
     started = started_folders(root, cfg) if any(r["state"] == "not-compiled" for r in rows.values()) else {}
+    retired: dict = {}
     for e in bp.epics:
         row = rows[e["id"]]
+        if row["state"] in ("done", "retired"):
+            continue
         held = others.get(epic_key(cfg["id"], e["id"]))
-        if held and row["state"] != "done":
+        if held:
             row["elsewhere"] = {k: held.get(k) for k in ("worktree", "branch", "state", "tasks_done", "tasks_total", "updated")}
         elif row["state"] == "not-compiled" and e["id"] in started:
             row["started"] = started[e["id"]]
-        blocked = [dep for dep in row["depends"] if not dependency_done(root, cfg, dep, rows)]
-        if blocked and row["state"] != "done":
+        gone = [dep for dep in row["depends"] if retired_dependency(root, cfg, dep, rows, retired)]
+        if gone:
+            row["depends_on_retired"] = gone
+        blocked = [dep for dep in row["depends"] if dep not in gone and not dependency_done(root, cfg, dep, rows)]
+        if blocked:
             row["blocked_by"] = blocked
     st["epics"] = list(rows.values())
     st["epic_order"] = delivery_order(cfg, bp, rows)
@@ -366,7 +398,8 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
 def summary(st: dict) -> dict:
     epics = st.get("epics", [])
     out = {k: st[k] for k in ("blueprint_id", "prefix", "product", "blueprint", "decisions", "review_checklist", "sources", "state", "constitution", "migration_needed") if k in st}
-    out.update(epics_done=sum(1 for e in epics if e["state"] == "done"), epics_total=len(epics), next=st.get("next"))
+    out.update(epics_done=sum(1 for e in epics if e["state"] == "done"),
+               epics_total=sum(1 for e in epics if e["state"] != "retired"), next=st.get("next"))
     return out
 
 
@@ -404,7 +437,7 @@ def brief(st: dict) -> str:
         lines = [f"[speckit-blueprint] No blueprint{label} at {st['blueprint']}. Next: /speckit-blueprint-discover with the idea."]
     else:
         done = sum(1 for e in st.get("epics", []) if e["state"] == "done")
-        total = len(st.get("epics", []))
+        total = sum(1 for e in st.get("epics", []) if e["state"] != "retired")
         lines = [f"[speckit-blueprint] {st.get('product')}{label}: {done}/{total} epics done. Blueprint: {st['blueprint']}."]
         if st.get("migration_needed"):
             lines.append("Migration needed: " + "; ".join(st["migration_needed"]) + ". Run `blueprint.py migrate`.")

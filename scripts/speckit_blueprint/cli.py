@@ -276,6 +276,8 @@ def run(root: Path, cfg: dict, cmd: str, args: list[str], wanted: str | None) ->
     if cmd == "stale":
         out = []
         for e in bp.epics:
+            if e["retired"]:  # never recompiled: compile refuses it
+                continue
             d = find_feature_dir(root, bcfg, e["id"])
             if d:
                 changed = stale_units(bp, read_trace(d) or {})
@@ -310,7 +312,8 @@ def run(root: Path, cfg: dict, cmd: str, args: list[str], wanted: str | None) ->
         dump(out)
         return rc
     if cmd == "epics":
-        dump([{"epic": e["id"], "title": e["title"], "depends": [f"{b}:{x}" if b else x for b, x in e["depends"]],
+        dump([{"epic": e["id"], "title": e["title"], **({"retired": True} if e["retired"] else {}),
+               "depends": [f"{b}:{x}" if b else x for b, x in e["depends"]],
                "repositories": [r["name"] for r in e["repos"]], "stories": [s["id"] for s in e["stories"]]} for e in bp.epics])
         return 0
     if cmd in ("repos", "gate"):

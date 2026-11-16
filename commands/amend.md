@@ -38,12 +38,17 @@ user's words verbatim, the blueprint id and path, the active feature and its bra
    (`| A-… | date | epic/story | what changed | why | approved by |`), marks a superseded DR and adds the
    new one, keeps the evidence tags (`[VERIFIED — S-nn, date]` / `[ASSUMED — why]`), runs
    `blueprint.py lint --blueprint <id>` until it exits 0, then `blueprint.py stale --blueprint <id>`, and
-   returns that list.
+   returns that list. An epic the change removes is retired, never deleted or renumbered: its heading
+   becomes `## Epic 08 — Retired (amended A-…)`, its Goal says why, one marker story keeps the linter
+   satisfied, and the delivery plan's tables and every other epic's **Depends on** stop naming it.
 3. **Propagate (you).** For each epic `stale` lists:
    - no tasks done: `/speckit-blueprint-compile <epic>`, and `/speckit-tasks` again if it had a tasks.md;
    - partly or fully built: never recompile over finished work silently. Tell the user what changed under
      built code and offer: recompile with `--force` and regenerate tasks (implement then reworks only what
      changed), a follow-up story in a later epic, or keeping the epic as built
      (`blueprint.py accept <epic> --note "<why>"`). The user decides.
+   - A retired epic is never recompiled (compile refuses it, `stale` leaves it out). When status shows a
+     `feature_directory` for it, it was compiled before: tell the user what was built for it
+     (`tasks_done`) and let them decide what happens to that work.
    - If status now reports the constitution `outdated`, run `blueprint.py bootstrap --blueprint <id>`.
 4. Report the amendment ID, what changed, which epics were recompiled, and what waits on the user.

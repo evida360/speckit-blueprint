@@ -109,6 +109,8 @@ table.mini { font-size: 13px; }
 .st-ready i, .blk.st-ready { background: var(--ready); }
 .st-blocked i, .blk.st-blocked { background: var(--blocked); }
 .badge.st-blocked i, .lg.st-blocked i { box-shadow: inset 0 0 0 1px var(--axis); }
+.st-retired i { background: transparent; box-shadow: inset 0 0 0 1px var(--axis); }
+.badge.st-retired { color: var(--muted); }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .lg i { width: 12px; height: 12px; border-radius: 3px; }
@@ -201,6 +203,9 @@ details.sg { margin: 8px 0 0; }
 details.sg > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 9px 12px 9px 8px; background: var(--surface-2); border-radius: 8px; }
 details.sg > summary:hover { background: var(--band-hover); }
 details.sg.s-current > summary { background: var(--info-bg); }
+details.sg.s-retired > summary { background: none; box-shadow: inset 0 0 0 1px var(--grid); }
+details.sg.s-retired > summary:hover { background: var(--surface-2); }
+details.sg.s-retired .sg-title { color: var(--ink-2); }
 .sp-chip { font: 600 11.5px/1.6 var(--mono); padding: 0 6px; border-radius: 5px; background: var(--surface); color: var(--ink); }
 .sg-title { font-size: 14px; font-weight: 650; }
 .sg-meter { flex: none; width: 72px; height: 6px; border-radius: 3px; background: var(--surface); overflow: hidden; }
@@ -212,6 +217,8 @@ details.epic { border-top: 1px solid var(--grid); }
 details.epic > summary { cursor: pointer; list-style: none; border-radius: 6px; }
 details.epic > summary::-webkit-details-marker { display: none; }
 details.epic > summary:hover { background: var(--surface-2); }
+details.epic.retired > summary, details.epic.retired .eid { color: var(--muted); }
+details.epic.retired .c-title { font-weight: 500; }
 summary:focus-visible, select:focus-visible, .tab:focus-visible, g.row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .c-title { position: relative; padding-left: 18px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .c-title::before { content: ""; position: absolute; left: 3px; top: 5px; border: 5px solid transparent; border-left: 6px solid var(--muted); transition: transform .15s; transform-origin: 3px 5px; }
@@ -448,6 +455,9 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   }
   const refOf = (b, e) => (ctx.multi ? `${b.id}:${e.id}` : String(e.id));
   const isWorking = e => ACTIVE.includes(e.state) || (e.elsewhere && typeof e.elsewhere === 'object') || (e.started && typeof e.started === 'object');
+  // An epic an amendment retired is never built: it is in no sprint, no progress and no forecast (its spent time still counts)
+  const isRetired = e => e.state === 'retired';
+  const planEpics = b => epicsOf(b).filter(e => !isRetired(e));
 
   // The epics in delivery order (the plan's order, which puts an epic after the open ones it depends on)
   function ordered(b) {
@@ -480,11 +490,12 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   function sprintsOf(b) { // [] when the blueprint has no sprints table
     if (ctx.sprints.has(b)) return ctx.sprints.get(b);
-    const plan = obj(b.plan), est = obj(plan.sprint_estimates), eps = epicsOf(b);
-    const byId = new Map(eps.map(e => [String(e.id), e]));
+    const plan = obj(b.plan), est = obj(plan.sprint_estimates), eps = planEpics(b);
+    const byId = new Map(eps.map(e => [String(e.id), e])), gone = new Set(epicsOf(b).filter(isRetired).map(e => String(e.id)));
     const out = [];
     for (const s of arr(plan.sprints).filter(x => x && typeof x === 'object')) {
       const label = String(s.label == null ? '' : s.label), ids = arr(s.epics).map(String), notes = obj(s.notes);
+      if (ids.length && ids.every(id => gone.has(id))) continue; // a sprint of retired epics has nothing left to build
       const mine = ids.filter(id => byId.has(id) && String(byId.get(id).sprint) === label).map(id => byId.get(id));
       const early = ids.filter(id => byId.has(id) && String(byId.get(id).sprint) !== label).map(id => ({ e: byId.get(id), note: String(notes[id] || '') }));
       out.push(makeSprint(b, label, String(s.milestone || ''), String(s.exit || ''), mine, early, est[label]));
@@ -534,7 +545,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   function tabs(st) {
     const list = blueprints(st);
     if (list.length < 2) return '';
-    const acs = l => sum(l, b => (isNum(b.acs_total) ? b.acs_total : sum(epicsOf(b), e => e.acs)));
+    const acs = l => sum(l, b => (isNum(b.acs_total) ? b.acs_total : sum(planEpics(b), e => e.acs)));
     const done = l => sum(l, b => (isNum(b.acs_done) ? b.acs_done : sum(epicsOf(b).filter(e => e.state === 'done'), e => e.acs)));
     const tab = (id, label, l, title) => html`<button type="button" class="tab" role="tab" id="${domId('tab', id)}" data-bp="${id}" aria-selected="${ui.bp === id ? 'true' : 'false'}" title="${title}">${label}<span class="pct">${pct(done(l), acs(l))}%</span></button>`;
     return [tab('all', 'All', list, 'Every blueprint'), ...list.map(b => tab(b.id, bpShort(b), [b], bpName(b)))];
@@ -596,10 +607,20 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
         items.push({ tone: 'ready', tag: 'Also ready', title: `${ready.slice(0, 4).map(e => `${refOf(b, e)} ${e.title || ''}`).join(' · ')}${ready.length > 4 ? ` and ${ready.length - 4} more` : ''}`,
           detail: 'Nothing blocks these; each can be built in its own worktree beside the next epic.', cmd: `blueprint.py workspace ${ctx.multi ? `${b.id}:` : ''}${ready[0].id} --create` });
       }
-      const outside = planned ? epicsOf(b).filter(e => !e.sprint && e.state !== 'done') : [];
+      const outside = planned ? planEpics(b).filter(e => !e.sprint && e.state !== 'done') : [];
       if (outside.length) {
         items.push({ tone: 'check', tag: 'Check', title: outside.map(e => `${refOf(b, e)} ${e.title || ''}`).join(' · '),
           detail: `In no sprint of the delivery plan, yet counted as remaining work (${plural(sum(outside, e => e.acs), 'AC')}).`, cmd: '' });
+      }
+      // a dependency on a retired epic counts as met; the blueprint should not name it any more
+      const onRetired = planEpics(b).filter(e => arr(e.depends_on_retired).length && e.state !== 'done');
+      if (onRetired.length) {
+        const many = sum(onRetired, e => arr(e.depends_on_retired).length) > 1;
+        items.push({ tone: 'check', tag: 'Check', title: onRetired.map(e => `${refOf(b, e)} ${e.title || ''}`).join(' · '),
+          detail: `${onRetired.map(e => `${refOf(b, e)} depends on ${arr(e.depends_on_retired).join(' and ')}`).join('; ')}. ${many
+            ? 'Those epics were retired by amendments, so these dependencies count as met; an amendment can take them out of Depends on.'
+            : 'That epic was retired by an amendment, so the dependency counts as met; an amendment can take it out of Depends on.'}`,
+          cmd: '/speckit-blueprint-amend' });
       }
     }
     if (!items.length) return '';
@@ -626,8 +647,8 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   function kpis(st) {
     const sel = selected(st), built = sel.filter(b => b.state !== 'no-blueprint');
-    const epics = sel.flatMap(epicsOf), acts = epics.map(e => obj(e.actual));
-    const acs = sum(sel, b => (isNum(b.acs_total) ? b.acs_total : sum(epicsOf(b), e => e.acs)));
+    const epics = sel.flatMap(planEpics), acts = sel.flatMap(epicsOf).map(e => obj(e.actual));
+    const acs = sum(sel, b => (isNum(b.acs_total) ? b.acs_total : sum(planEpics(b), e => e.acs)));
     const acsDone = sum(sel, b => (isNum(b.acs_done) ? b.acs_done : sum(epicsOf(b).filter(e => e.state === 'done'), e => e.acs)));
     const p = pct(acsDone, acs);
     const firsts = acts.map(a => ts(a.first)).filter(isNum);
@@ -655,7 +676,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const rem = rems.length > 1 ? mergeRemaining(rems) : rems[0] || null;
     const need = off ? 'Metrics are off' : !built.length ? 'No blueprint yet' : 'Needs one finished epic with recorded sessions';
     if (!rem || !num(rem.epics)) {
-      const allDone = rem && built.length && built.every(b => b.state === 'all-done' || epicsOf(b).every(e => e.state === 'done'));
+      const allDone = rem && built.length && built.every(b => b.state === 'all-done' || planEpics(b).every(e => e.state === 'done'));
       return [progress, spent, card('Remaining P50 – P90', allDone ? 'Nothing left' : '—', [allDone ? 'Every epic is done' : need]),
         card('Forecast finish', allDone ? 'Done' : '—', [allDone ? '' : need])];
     }
@@ -674,6 +695,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   // ---------- state of an epic: [class, label, note] ----------
   function stateOf(e) {
     const s = e.state, w = obj(e.elsewhere);
+    if (s === 'retired') return ['retired', 'Retired', 'not counted'];
     if (s === 'done') {
       const open = num(e.tasks_total) - num(e.tasks_done);
       return ['done', 'Done', open > 0 ? `${plural(open, 'task')} unchecked` : ''];
@@ -746,7 +768,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   }
 
   function bpSummary(b, extra) { // chevron · name over its status · sprint ribbon · progress and finish: the same columns on every row
-    const eps = epicsOf(b), acs = sum(eps, e => e.acs), acsDone = sum(eps.filter(e => e.state === 'done'), e => e.acs);
+    const eps = planEpics(b), acs = sum(eps, e => e.acs), acsDone = sum(eps.filter(e => e.state === 'done'), e => e.acs);
     const list = sprintsOf(b), cur = currentSprint(b), fin = arr(obj(b.remaining).finish).filter(Boolean);
     const status = [list.length
       ? `${list.filter(s => s.done).length} of ${plural(list.filter(s => s.label !== null).length, 'sprint')} done${cur ? ` · now ${sprintId(cur)} ${cur.milestone}` : ''}`
@@ -837,14 +859,20 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
       return html`<details class="sg s-${s.status}" data-group="${key}"${open ? OPEN : ''}><summary class="flat" id="${domId('sg', key)}"><span class="chev" aria-hidden="true"></span><span class="sp-chip">${sprintId(s)}</span><span class="sg-title">${s.milestone || sprintName(s)}</span>${status}<span class="sg-meter" role="img" aria-label="${s.acsDone} of ${s.acs} ACs done"><i style="width:${pct(s.acsDone, s.acs)}%"></i></span><span class="sg-m">${s.acsDone} / ${s.acs} ACs · ${s.nDone} of ${plural(s.n, 'epic')} done${fin ? ` · ${fin}` : ''}</span></summary>
         <div class="sg-body">${s.epics.map(e => epicRow(b, e, maxAcs))}</div></details>`;
     };
+    const retiredGroup = b => { // after the sprints, closed: what amendments retired
+      const gone = epicsOf(b).filter(isRetired), key = `sg:${b.id}:retired`;
+      if (!gone.length) return '';
+      return html`<details class="sg s-retired" data-group="${key}"${groupOpen(key, false) ? OPEN : ''}><summary class="flat" id="${domId('sg', key)}"><span class="chev" aria-hidden="true"></span><span class="sg-title">Retired</span><span class="sg-m">${plural(gone.length, 'epic')} retired by amendments · never built, not counted</span></summary>
+        <div class="sg-body">${gone.map(e => epicRow(b, e, maxAcs))}</div></details>`;
+    };
     const body = b => {
-      const list = epicsOf(b);
+      const list = planEpics(b);
       if (b.state === 'no-blueprint') return html`<p class="empty">No blueprint yet — run discovery: <code>/speckit-blueprint-discover</code>${b.blueprint ? html` (it writes <code>${b.blueprint}</code>)` : ''}.</p>`;
-      if (!list.length) return html`<p class="empty">The blueprint has no epics yet.</p>`;
+      if (!epicsOf(b).length) return html`<p class="empty">The blueprint has no epics yet.</p>`;
       const sps = sprintsOf(b);
       const head = html`<div class="bphead">${wrapped() ? '' : html`<span class="muted">${list.filter(e => e.state === 'done').length} of ${plural(list.length, 'epic')} done</span>`}${nextStep(b, b.next)}${sps.length ? html`<span class="tools"><button type="button" class="tool" data-fold="open" data-of="${b.id}">Open all sprints</button><button type="button" class="tool" data-fold="close" data-of="${b.id}">Close all</button></span>` : ''}</div>`;
-      if (!sps.length) return html`${head}${cols(false)}${ordered(b).map(e => epicRow(b, e, maxAcs))}`;
-      return html`${head}${cols(true)}${sps.map(s => sprintGroup(b, s))}`;
+      if (!sps.length) return html`${head}${cols(false)}${ordered(b).map(e => epicRow(b, e, maxAcs))}`; // retired epics last: the plan's order leaves them out
+      return html`${head}${cols(true)}${sps.map(s => sprintGroup(b, s))}${retiredGroup(b)}`;
     };
     const group = b => {
       if (!wrapped()) return html`<div class="ep-group">${body(b)}</div>`;
@@ -867,13 +895,13 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const total = num(e.tasks_total), done = num(e.tasks_done);
     const tasks = total
       ? html`<span class="bar" role="img" aria-label="${done} of ${total} tasks done"><i style="width:${pct(done, total)}%"></i></span><span class="frac">${done}/${total}</span>`
-      : html`<span class="muted">${e.state === 'done' ? '—' : e.state === 'not-compiled' ? 'not compiled' : 'no tasks yet'}</span>`;
+      : html`<span class="muted">${e.state === 'done' || isRetired(e) ? '—' : e.state === 'not-compiled' ? 'not compiled' : 'no tasks yet'}</span>`;
     const stories = arr(e.stories).length;
     const size = html`<span class="sz" title="${e.size ? `Size ${e.size} in the delivery plan` : 'No size in the delivery plan'}">${e.size || '–'}</span><span class="sbar" role="img" aria-label="${num(e.acs)} acceptance criteria"><i style="width:${Math.max(3, pct(num(e.acs), maxAcs))}%"></i></span><span class="frac" title="${plural(num(e.acs), 'acceptance criterion', 'acceptance criteria')} in ${plural(stories, 'story', 'stories')}">${num(e.acs)}</span>`;
-    const open = e.state !== 'done';
+    const open = e.state !== 'done' && !isRetired(e);
     const estA = open && isNum(arr(est.agent_s)[0]) ? html`<span class="meta" title="${range(est.agent_s, dur)}">est. ${rough(est.agent_s, roughDur)}</span>` : '';
     const estC = open && isNum(arr(est.cost_usd)[0]) ? html`<span class="meta" title="${range(est.cost_usd, money)}">est. ${rough(est.cost_usd, roughMoney)}</span>` : '';
-    return html`<details class="epic" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('ep', key)}">
+    return html`<details class="epic${isRetired(e) ? ' retired' : ''}" data-key="${key}"${ui.open.has(key) ? OPEN : ''}><summary id="${domId('ep', key)}">
       <span class="c-title"><span class="eid">${e.id || '?'}</span>${e.title || ''}${tags.length ? html`<span class="tags">${tags}</span>` : ''}</span>
       <span class="c-size" data-label="Size">${size}</span>
       <span class="c-state" data-label="State"><span class="badge st-${cls}" title="${label} (state: ${e.state || 'unknown'})"><i></i>${label}</span>${note ? html`<span class="meta">${note}</span>` : ''}</span>
@@ -885,12 +913,13 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
 
   function epicBody(b, e) {
     const out = [], w = obj(e.elsewhere), updated = ts(w.updated);
+    if (isRetired(e)) out.push(html`<p class="note">An amendment retired this epic: it is never built or offered next, a dependency on it counts as met, and it is left out of progress, estimates and the forecast.${e.feature ? ' It was compiled before the amendment: its folder, and anything built from it, stay until you decide what to do with them.' : ''}</p>`);
     const plan = [];
     if (e.goal) plan.push(['Goal', e.goal]);
     if (e.why) plan.push(['Why now', e.why]);
     if (arr(e.depends).length) {
       plan.push(['Depends on', html`${arr(e.depends).map(d => {
-        const k = String(d).includes(':') ? String(d) : `${b.id}:${d}`, hit = ctx.index.get(k), ok = hit && hit.e.state === 'done';
+        const k = String(d).includes(':') ? String(d) : `${b.id}:${d}`, hit = ctx.index.get(k), ok = hit && (hit.e.state === 'done' || isRetired(hit.e));
         return html`<span class="chip ${ok ? 'c-done' : 'c-open'}" title="${hit ? `${hit.e.title || ''}: ${stateOf(hit.e)[1]}` : 'unknown'}"><i></i>${d}</span>`;
       })}`]);
     }
@@ -954,11 +983,11 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   function storiesBlock(e) {
     const stories = arr(e.stories).filter(s => s && typeof s === 'object'), other = arr(e.other_tasks);
     if (!stories.length && !other.length) return '';
-    const next = e.state === 'done' ? null : firstOpen(stories.flatMap(s => arr(s.tasks)).concat(other));
-    const story = s => {
-      const st = String(s.state || 'open');
-      const meta = join([isNum(s.acs) ? plural(s.acs, 'AC') : '', num(s.total) ? `${num(s.done)}/${s.total} tasks` : 'no tasks yet', num(s.active_s) > 0 ? `${dur(s.active_s)} active` : ''], ' · ');
-      return html`<div class="story"><div class="story-h"><span class="sid">${s.id || ''}</span><span>${s.title || ''}</span><span class="sst s-${st}">${st.replace('-', ' ')}</span><span class="meta">${meta}</span></div>${taskList(arr(s.tasks), next)}</div>`;
+    const next = e.state === 'done' || isRetired(e) ? null : firstOpen(stories.flatMap(s => arr(s.tasks)).concat(other));
+    const story = s => { // a retired epic's stories are never built: no state, no "no tasks yet"
+      const st = String(s.state || 'open'), gone = isRetired(e);
+      const meta = join([isNum(s.acs) ? plural(s.acs, 'AC') : '', num(s.total) ? `${num(s.done)}/${s.total} tasks` : gone ? '' : 'no tasks yet', num(s.active_s) > 0 ? `${dur(s.active_s)} active` : ''], ' · ');
+      return html`<div class="story"><div class="story-h"><span class="sid">${s.id || ''}</span><span>${s.title || ''}</span>${gone ? '' : html`<span class="sst s-${st}">${st.replace('-', ' ')}</span>`}<span class="meta">${meta}</span></div>${taskList(arr(s.tasks), next)}</div>`;
     };
     return html`<h4>Stories</h4>${stories.map(story)}${other.length ? html`<div class="story"><div class="story-h"><span>Tasks outside stories</span></div>${taskList(other, next)}</div>` : ''}`;
   }
@@ -1015,7 +1044,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
       const slots = new Array(k).fill(now), fin = {};
       for (const e of ordered(b)) {
         const est = obj(e.estimate), c = arr(est.calendar_s)[q];
-        if (e.state === 'done' || !isNum(c)) continue;
+        if (e.state === 'done' || isRetired(e) || !isNum(c)) continue;
         const len = Math.max(0, c - num(obj(est.spent).calendar_s)) * 1000;
         const ready = Math.max(now, ...arr(e.depends).map(d => fin[d] || now));
         const i = slots.indexOf(Math.min(...slots)), start = Math.max(ready, slots[i]);
@@ -1052,7 +1081,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     for (const b of sel) {
       const plan = forecast(b, now), sps = sprintsOf(b);
       if (sel.length > 1) rows.push({ group: bpName(b) });
-      if (!sps.length) { for (const e of ordered(b)) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null }); continue; }
+      if (!sps.length) { for (const e of ordered(b).filter(x => !isRetired(x))) rows.push({ b, e, spans: spansOf(e), f: plan[e.id] || null }); continue; }
       for (const s of sps) {
         const fs = s.epics.map(e => plan[e.id]).filter(Boolean);
         const f = fs.length ? { s50: Math.min(...fs.map(x => x.s50)), e50: Math.max(...fs.map(x => x.e50)), e90: Math.max(...fs.map(x => x.e90)) } : null;

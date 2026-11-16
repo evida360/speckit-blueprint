@@ -110,7 +110,8 @@ def epic_entry(root: Path, cfg: dict, bcfg: dict, bp: Blueprint, e: dict, row: d
     intervals = m.pop("intervals", [])
     return {
         "id": e["id"], "key": key, "title": e["title"], "state": row["state"], "depends": row.get("depends", []),
-        "blocked_by": row.get("blocked_by", []), "elsewhere": row.get("elsewhere"), "started": row.get("started"),
+        "blocked_by": row.get("blocked_by", []), "depends_on_retired": row.get("depends_on_retired", []),
+        "elsewhere": row.get("elsewhere"), "started": row.get("started"),
         "feature": row.get("feature_directory"),
         "branch": (trace or {}).get("branch") or row.get("branch"), "acs": epic_acs(e),
         "tasks_done": sum(t["done"] for t in tasks), "tasks_total": len(tasks), "review": row.get("review"),
@@ -211,7 +212,8 @@ def build_state(root: Path, cfg: dict) -> dict:
             "migration_needed": st.get("migration_needed"), "epics": epics,
             "plan": {"sprints": plan["sprints"], "critical_path": plan["critical_path"],
                      "order": (st.get("epic_order") or {}).get("epics", []), "sprint_estimates": est.get("sprints") or {}},
-            "acs_total": sum(e["acs"] for e in epics), "acs_done": sum(e["acs"] for e in epics if e["state"] == "done"),
+            "acs_total": sum(e["acs"] for e in epics if e["state"] != "retired"),  # a retired epic is never built
+            "acs_done": sum(e["acs"] for e in epics if e["state"] == "done"),
             "remaining": est.get("remaining"), "confidence": est.get("confidence"), "history": est.get("history"),
             "discovery": {k: {f: v.get(f) for f in ("agent_s", "cost_usd", "cost_estimated", "wait_s", "sessions")} | {"tokens": sum(v["tokens"].values())}
                           for k, v in disc.items()},
@@ -222,12 +224,13 @@ def build_state(root: Path, cfg: dict) -> dict:
                     if e["state"] in ACTIVE_STATES and any(x["name"] == name for x in e["repositories"])]
         repos.append({"name": name, "path": r["main_path"], "hub": r["hub"], "gate": r.get("gate"), "epics_in_progress": touching})
     every = [e for b in blueprints for e in b["epics"]]
+    planned = [e for e in every if e["state"] != "retired"]  # what is spent on a retired epic still counts below
     worked = [e["actual"] for e in every if e["actual"].get("sessions")] \
         + [d for b in blueprints for d in (b.get("discovery") or {}).values() if d.get("sessions")]
     known = [x["cost_usd"] for x in worked if x.get("cost_usd") is not None]
     totals = {
-        "epics": len(every), "epics_done": sum(e["state"] == "done" for e in every),
-        "acs": sum(e["acs"] for e in every), "acs_done": sum(e["acs"] for e in every if e["state"] == "done"),
+        "epics": len(planned), "epics_done": sum(e["state"] == "done" for e in every),
+        "acs": sum(e["acs"] for e in planned), "acs_done": sum(e["acs"] for e in every if e["state"] == "done"),
         "agent_s": sum(e["actual"]["agent_s"] or 0 for e in every)
                    + sum(d.get("agent_s") or 0 for b in blueprints for d in (b.get("discovery") or {}).values()),
         "cost_usd": sum(known) if known else None,  # None: no recorded cost yet (unknown, not zero)

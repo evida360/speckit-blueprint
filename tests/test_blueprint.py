@@ -72,6 +72,33 @@ EPIC_03 = """## Epic 03 — Monthly export
 
 """
 
+# An epic an amendment retired, written as evida-wiki's land:E08 is: the heading kept as a marker, and one
+# marker story with one AC, which the linter asks of every epic
+EPIC_08_RETIRED = """## Epic 08 — Retired (amended A-01)
+
+**Goal** None: the shop pages were removed (A-01); the epic and its stories are retired and their IDs are not reused.
+**Personas served** P1
+**Depends on** —
+**Scope** Out: everything (A-01).
+
+### E08-S01 — Retired
+
+**Story** — As **P1 (Sara)**, I want this retired story kept as a marker, so that its ID is never reused.
+**Acceptance Criteria**
+- AC-1 Given the blueprint, Then no other epic depends on E08 (A-01).
+**Edge cases** — None.
+**Tests**
+- Manual: `blueprint.py lint` shows no reference to the removed pages.
+**Tasks**
+- None.
+**Story DoD** — Default (documentation).
+
+**Definition of Done**
+- Retired (A-01).
+**Session handoff checklist** — None.
+
+"""
+
 # §16.1 of the template: the rows need not be in Order, and E03 is left out
 EPIC_ORDER_TABLE = (
     "| Order | Epic | Goal | Depends on | Stories | Size | Why now, not earlier/later |\n"
@@ -481,6 +508,49 @@ class StatusTest(ProjectTest):
         self.assertEqual(st["epic_order"]["epics"], ["E00", "E01", "E02"])
         self.assertEqual((st["next"]["command"], st["next"]["epic"]), ("speckit-implement", "E02"))
         self.assertIn("Current: E02 Daily totals — in-progress, tasks 1/2.", self.run_cli("status", "--brief").stdout)
+
+    def test_a_retired_epic_is_never_next_and_blocks_nothing(self):
+        # E02 still names the retired E08 in **Depends on**, as an amendment may forget to drop it
+        self.edit_blueprint("## 18. Session protocol", EPIC_02.replace("**Depends on** E00", "**Depends on** E00, E08")
+                            + EPIC_08_RETIRED + "## 18. Session protocol")
+        self.json_cli("bootstrap")
+        st = self.state()
+        e = {r["epic"]: r for r in st["epics"]}
+        self.assertEqual((e["E08"]["state"], e["E08"]["acs"]), ("retired", 1))
+        self.assertFalse({"blocked_by", "depends_on_retired", "feature_directory"} & set(e["E08"]))
+        # a dependency on it is met, and reported so an amendment can drop it; E00 still blocks
+        self.assertEqual((e["E02"]["blocked_by"], e["E02"]["depends_on_retired"]), (["E00"], ["E08"]))
+        self.assertEqual(st["epic_order"], {"source": "blueprint", "epics": ["E00", "E01", "E02"]})
+        res = self.run_cli("compile", "E08", check=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("E08 is retired", res.stderr)
+        self.assertEqual(self.json_cli("epics")[-1], {"epic": "E08", "title": "Retired (amended A-01)", "retired": True,
+                                                      "depends": [], "repositories": [], "stories": ["E08-S01"]})
+        for epic in ("E00", "E01", "E02"):
+            self.assertEqual(self.state()["next"]["epic"], epic)
+            self.json_cli("compile", epic)
+            self.finish(epic)
+        st = self.state()
+        self.assertEqual((st["state"], st["next"]["command"]), ("all-done", "speckit-blueprint-discover"))
+        self.assertEqual((st["blueprints"][0]["epics_done"], st["blueprints"][0]["epics_total"]), (3, 3))
+        self.assertIn("Tally: 3/3 epics done.", self.run_cli("status", "--brief").stdout)
+
+    def test_an_epic_retired_after_it_was_compiled(self):
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E00")
+        self.finish("E00")
+        self.json_cli("compile", "E01")
+        (self.feature() / "tasks.md").write_text("- [x] T001 [US1] E01-S01-T1 sale form\n- [ ] T002 [US2] E01-S02-T1 undo\n")
+        self.assertEqual(self.state()["next"]["command"], "speckit-implement")
+        self.edit_blueprint("## Epic 01 — Record sales", "## Epic 01 — Retired (amended A-01)")
+        self.assertEqual(self.json_cli("stale"), [])  # its text changed, yet it is never recompiled
+        st = self.state()
+        e01 = next(e for e in st["epics"] if e["epic"] == "E01")
+        # status keeps its folder and tasks, so the amendment can tell the user what was built for it
+        self.assertEqual({k: e01.get(k) for k in ("state", "feature_directory", "tasks_done", "tasks_total", "changed_since_compile")},
+                         {"state": "retired", "feature_directory": "specs/002-e01-record-sales", "tasks_done": 1, "tasks_total": 2,
+                          "changed_since_compile": None})
+        self.assertEqual(st["state"], "all-done")
 
     def test_constitution_outdated(self):
         self.json_cli("bootstrap")
@@ -1285,6 +1355,15 @@ class MultiBlueprintTest(ProjectTest):
         e01 = next(e for e in self.state("--blueprint", "desk")["epics"] if e["epic"] == "E01")
         self.assertEqual(e01["blocked_by"], ["E00"])
 
+    def test_a_dependency_on_another_blueprints_retired_epic(self):
+        self.configure(MULTI_CONFIG)
+        self.edit_blueprint("## 18. Session protocol", EPIC_08_RETIRED + "## 18. Session protocol")  # ONE retires E08
+        desk = self.tmp / "docs" / "desk" / "BLUEPRINT.md"
+        desk.write_text(desk.read_text(encoding="utf-8").replace("**Depends on** E00", "**Depends on** E00, ONE:E08, one:E01"),
+                        encoding="utf-8")
+        e01 = next(e for e in self.state("--blueprint", "desk")["epics"] if e["epic"] == "E01")
+        self.assertEqual((e01["blocked_by"], e01["depends_on_retired"]), (["E00", "one:E01"], ["ONE:E08"]))
+
     def test_config_errors(self):
         self.configure("blueprints:\n  one:\n    path: docs/BLUEPRINT.md\n  desk:\n    path: docs/x.md\n    decisions: docs/DECISIONS.md\n")
         res = self.run_cli("status", check=False)
@@ -1594,6 +1673,17 @@ class ModelTest(unittest.TestCase):
         rows, errors = parse_repo_table(REPO_TABLE.replace("| 1 |", "| 2 |", 1).replace("| `app` | 2 |", "| `app` | 1 |"))
         self.assertEqual(([r["name"] for r in rows], errors), (["app", "core"], []))
         self.assertEqual(parse_repo_table("**Repositories** Order: `core`.")[1], ["the **Repositories** field is not a table (run `blueprint.py migrate`)"])
+
+    def test_retired_epics(self):
+        from speckit_blueprint.model import Blueprint, retired_title
+
+        for title in ("Retired", "Retired (amended A-01)", "retired: replaced by E12", "Retired — the pages were removed",
+                      "**Retired** (A-01)", "Retired - gone"):
+            self.assertTrue(retired_title(title), title)
+        for title in ("Retired accounts cleanup", "Retired-user export", "Retirement plan", "Record sales"):
+            self.assertFalse(retired_title(title), title)
+        bp = Blueprint(Path("BLUEPRINT.md"), "## Epic 00 — Foundation\n\n" + EPIC_08_RETIRED)
+        self.assertEqual([(e["id"], e["retired"], len(e["stories"])) for e in bp.epics], [("E00", False, 0), ("E08", True, 1)])
 
     def test_epic_order_table(self):
         from speckit_blueprint.model import Blueprint
@@ -2028,6 +2118,37 @@ class MetricsTest(ProjectTest):
         e = {x["id"]: x for x in b["epics"]}
         self.assertEqual((e["E01"]["size"], e["E01"]["goal"], e["E01"]["sprint"], e["E01"]["critical"]), ("M", "Sales", "2", True))
         self.assertEqual((e["E00"]["sprint"], e["E02"]["why"]), ("1", None))
+
+    def test_a_retired_epic_is_not_remaining_work(self):
+        self.add_epic_02()
+        self.edit_blueprint("E00, then E01.", "| Order | Epic | Goal | Size |\n|---|---|---|---|\n| 1 | E00 Foundation | The gate | S |\n"
+                            "| 2 | E01 Record sales | Sales | M |\n| 3 | E02 Daily totals | Totals | S |\n\n"
+                            "| Sprint | Epics | Milestone | Exit criteria |\n|---|---|---|---|\n| 1 | E00 | Skeleton | check green |\n"
+                            "| 2 | E01, E02 | Sales | A sale is saved |\n")
+        self.e00_session()
+        self.finish("E00")
+        before = self.json_cli("estimate")
+        # an amendment retires E08, in no table of the delivery plan; E02 still names it in **Depends on**
+        self.edit_blueprint("## 18. Session protocol", EPIC_08_RETIRED + "## 18. Session protocol")
+        self.edit_blueprint("**Depends on** E00\n**Preconditions for the session** — E00 done.\n",
+                            "**Depends on** E00, E08\n**Preconditions for the session** — E00 done.\n")
+        after = self.json_cli("estimate")
+        self.assertEqual((sorted(after["epics"]), sorted(after["sprints"])), (["E01", "E02"], ["2"]))
+        for key in ("epics", "agent_s", "cost_usd", "tokens", "calendar_s"):  # the same seeded runs, the same epics
+            self.assertEqual(after["remaining"][key], before["remaining"][key], key)
+        self.assertEqual(after["sprints"]["2"]["agent_s"], before["sprints"]["2"]["agent_s"])
+        e08 = self.json_cli("estimate", "E08")
+        self.assertEqual((e08.get("retired"), "agent_s" in e08), (True, False))
+        out = self.tmp / "dashboard.html"
+        self.run_cli("dashboard", "--export", str(out))
+        state = json.loads(out.read_text(encoding="utf-8").split("window.__STATE__ = ", 1)[1].split(";</script>", 1)[0])
+        b = state["blueprints"][0]
+        e = {x["id"]: x for x in b["epics"]}
+        self.assertEqual((e["E08"]["state"], e["E08"]["estimate"], e["E08"]["sprint"]), ("retired", None, None))
+        self.assertEqual((e["E02"]["blocked_by"], e["E02"]["depends_on_retired"]), ([], ["E08"]))
+        # E00 1 AC, E01 3, E02 1; E08's marker AC counts nowhere
+        self.assertEqual((b["acs_total"], b["acs_done"], b["plan"]["order"], b["remaining"]["epics"]), (5, 1, ["E00", "E01", "E02"], 2))
+        self.assertEqual((state["totals"]["epics"], state["totals"]["epics_done"], state["totals"]["acs"]), (3, 1, 5))
 
     def test_backfill_and_status_line(self):
         tr = self.e00_session(sid="s3")

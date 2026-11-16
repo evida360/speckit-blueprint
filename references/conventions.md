@@ -7,7 +7,8 @@ Commands link here instead of repeating it. `blueprint.py` below is
 
 - `blueprint.py status --json` is the state: the current blueprint (`blueprint_id`, `prefix`,
   `blueprint`, `decisions`, `review_checklist`, `sources`), every epic (`state`, `depends`,
-  `blocked_by`, `elsewhere`, `started`, `repositories`, `tasks_done`/`tasks_total`, `review_missing`),
+  `blocked_by`, `depends_on_retired`, `elsewhere`, `started`, `repositories`, `tasks_done`/`tasks_total`,
+  `review_missing`; a `retired` epic is never next and blocks nothing),
   `next` (with `missing_repositories` and `setup` when the next epic needs repositories this machine
   lacks), `epic_order` (the order `next` takes the epics in: the blueprint's epic order table, or
   blueprint order, with each epic's open dependencies moved before it), the guaranteed `effort` per step

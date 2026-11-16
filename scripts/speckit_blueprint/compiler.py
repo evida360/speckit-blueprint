@@ -183,6 +183,8 @@ def compile_epic(root: Path, cfg: dict, bp: Blueprint, epic_ref: str, force: boo
     epic = bp.epic(epic_ref)
     if not epic:
         raise SystemExit(f"error: no '## Epic {epic_ref}' in {bp.path}")
+    if epic["retired"]:
+        raise SystemExit(f"error: {epic['id']} is retired ('## Epic {epic['num']:02d} — {epic['title']}'); there is nothing to compile")
     rel_bp = os.path.relpath(bp.path, root)
     eid, etitle = epic["id"], epic["title"]
     lines = bp.lines

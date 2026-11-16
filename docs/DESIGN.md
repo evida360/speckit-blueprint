@@ -87,6 +87,12 @@ overrides `repositories:` setting by setting: `evida-id: {remote: …}` there ke
   belongs to the last one, where it is finished; the earlier row keeps its note. The first `Critical
   path:` line with arrows (`E00 → E02 → E04 approval → E05`) marks the critical path, up to the end of its
   sentence. Tables and lines inside the delivery plan section win over ones elsewhere.
+- A retired epic: an amendment that removes an epic keeps its heading as a marker, so its ID is never
+  reused (the template retires dropped IDs with a one-line note). Its title is the word `Retired`, alone
+  or followed by a parenthesis, a colon or a dash: `## Epic 08 — Retired (amended A-01)`, the way a
+  blueprint retires its other IDs (`### F-08 — Retired (amended A-01)`). A title that only starts with
+  the word (`Retired accounts cleanup`) is an ordinary epic. The linter still asks for a story with an
+  AC, so a marker story stays; its ACs count nowhere. See Lifecycle for what status does with it.
 
 ## Commands and hooks
 
@@ -111,16 +117,16 @@ all point at `speckit.blueprint.hook`.
 
 ## Lifecycle and next step
 
-Epic states: `not-compiled`, `compiled`, `stale`, `tasked`, `in-progress`, `implemented`, `done`, and three
-overlays: `blocked` (a dependency is not done in this checkout), `elsewhere` (claimed on the board by
-another worktree) and `started` (not compiled in this checkout, but its hub branch exists, locally other
-than the branch this checkout is on, or on a remote: in progress on that branch). `next` is the first
-epic in delivery order that is none of these and is compiled in this checkout, so an epic in progress is
-finished before another starts; without one, the first in delivery order that is none of these. When
-every remaining epic is blocked, elsewhere or started, `next.command` is `wait` with the reason. Script
-steps appear as `next.command` `migrate` or `bootstrap` with the exact command in `next.run`; they run
-before any epic. When the next epic changes repositories that are not on this machine, `next` lists them
-(`missing_repositories`) with the command that clones them (`next.setup`).
+Epic states: `not-compiled`, `compiled`, `stale`, `tasked`, `in-progress`, `implemented`, `done`,
+`retired`, and three overlays: `blocked` (a dependency is not done in this checkout), `elsewhere` (claimed
+on the board by another worktree) and `started` (not compiled in this checkout, but its hub branch exists,
+locally other than the branch this checkout is on, or on a remote: in progress on that branch). `next` is
+the first epic in delivery order that is none of these and is compiled in this checkout, so an epic in
+progress is finished before another starts; without one, the first in delivery order that is none of
+these. When every remaining epic is blocked, elsewhere or started, `next.command` is `wait` with the
+reason. Script steps appear as `next.command` `migrate` or `bootstrap` with the exact command in
+`next.run`; they run before any epic. When the next epic changes repositories that are not on this
+machine, `next` lists them (`missing_repositories`) with the command that clones them (`next.setup`).
 
 Delivery order is the blueprint's epic order table (§16.1 of the template: the first table with an
 `Order` and an `Epic` column), by the Order number; rows without a number go last and rows with the same
@@ -132,6 +138,15 @@ epic now depends on, is built before that one rather than after every epic that 
 Status reports the order as `epic_order` (`source`: `table` or `blueprint`), and a `next` that compiles
 an epic names the epics waiting for it. The table decides because it is where the blueprint states the
 order and the reasons; the epics' places in the file only record when each was written.
+
+A `retired` epic (see the conventions above) is never built: it is not in the delivery order, so it is
+never `next`, and it carries no overlay. `estimate` leaves it out of `remaining` and of the sprints, and
+the dashboard lists it last, muted, outside every sprint and count. A dependency on it counts as met,
+since it will never be done and the epic waiting for it would otherwise wait forever; status names it in
+`depends_on_retired` and the dashboard asks you to check it, because the amendment that retired the epic
+should have taken it out of that **Depends on**. Compile refuses a retired epic and `stale` leaves it out,
+so an amendment never recompiles it. One compiled before it was retired keeps its `feature_directory`
+and task counts in status: what was built for it is the user's to decide.
 
 A started epic is skipped, not continued, because status cannot tell a teammate's branch from your own
 from another machine; the brief says how to continue it (on its branch, or `workspace <epic> --create`),
@@ -295,9 +310,11 @@ Units are formatted in one place: `2h 5m`, `45m`, `38s`, `1d 4h`, `$3.10`, `2.4M
   per story. A cost comes only from the finished epics that have one; when none has, cost ranges are
   `null` ("cost unknown"), not zero.
 - An epic's estimate is a P50–P90 range of rate × ACs. The remaining project is a seeded Monte Carlo over
-  the remaining epics; the finish date schedules them, in status's delivery order, on the `Depends on`
-  graph with the parallelism observed so far. Fewer than three finished epics: the range is marked low
-  confidence and P90 is widened by half, since one or two epics say nothing about the spread.
+  the remaining epics, those neither done nor retired; the finish date schedules them, in status's
+  delivery order, on the `Depends on` graph with the parallelism observed so far. Fewer than three
+  finished epics: the range is marked low confidence and P90 is widened by half, since one or two epics
+  say nothing about the spread. A retired epic has no estimate, and its time never becomes a rate: its
+  ACs are a marker story's, not the work's.
 - Each sprint of the delivery plan gets its P50–P90 from the same runs: the agent time and cost of its open
   epics, and the date its last open epic is done (`estimate` → `sprints`, keyed by the sprint's label).
 
@@ -310,14 +327,17 @@ line. The page is English, uses units everywhere and has no external dependencie
 first:
 
 - What needs you: sessions waiting for an answer, each blueprint's next command, reviews and recompiles,
-  the epics nothing blocks that could be built in a second worktree, and open epics no sprint lists.
+  the epics nothing blocks that could be built in a second worktree, open epics no sprint lists, and
+  epics that still depend on a retired one.
 - Totals, remaining ranges and the finish date, and the sprint the work is in.
 - The sprints: each a bar of its epics, every block as wide as its acceptance criteria and colored by
   state, with its exit criteria and a P50–P90 finish. Finished sprints fold into one row.
 - One row per live session (worktree, epic, story, current activity, waiting for you).
 - The epics, grouped by sprint in delivery order: size, state, tasks, time and cost, the critical path,
   what each waits for and unlocks; expandable to the plan's goal and reason, stories, tasks and
-  repositories. A blueprint without a sprints table gets one list in delivery order.
+  repositories. A blueprint without a sprints table gets one list in delivery order. Retired epics come
+  last, muted (in a closed group after the sprints), and count in no progress, AC total or forecast; the
+  time spent on one before it was retired still counts as spent.
 - A timeline by sprint, with the open sprints' epics and their forecast ranges.
 - Where each epic's time went, and what an acceptance criterion cost in each finished epic: the rates
   every estimate multiplies by, so the spread of the remaining cost is visible.
@@ -328,7 +348,7 @@ sprints as a ribbon, its progress and finish), and the timeline shows one row pe
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.6 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.7 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds

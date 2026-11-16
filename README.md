@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.6, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.5.7, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,7 +57,7 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.6.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.7.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
@@ -93,6 +93,10 @@ decision brief, product-changing amendments, migrations, and every commit and pu
 order of the blueprint's epic order table (§16.1, its Order column), or in blueprint order when there is
 no table; either way an epic another one depends on comes first, so an epic an amendment appended at the
 end of the file is built when the plan needs it. `status --json` shows the order as `epic_order`.
+
+An amendment that drops an epic retires it: the heading stays as a marker, its title the word `Retired`
+(`## Epic 08 — Retired (amended A-01)`), so its ID is never reused. Status reports it `retired`: it is
+never next, compile refuses it, and it counts in no progress, estimate or forecast.
 
 | Command | Role |
 |---|---|
@@ -147,7 +151,8 @@ Each epic says which repositories it changes, in order (providers before consume
 ## Parallel epics
 
 - `**Depends on** E00, E02` is read (`E00 to E17` and `E20 and E21` too): an epic is `blocked` until its
-  dependencies are DONE in the checkout.
+  dependencies are DONE in the checkout. A dependency on a retired epic counts as met; status lists it
+  (`depends_on_retired`) so an amendment can drop it.
 - `blueprint.py workspace E04 --create` makes the epic's worktrees, in the hub and in every repository it
   changes, all on its branch, and prints how to open a session there (`claude --add-dir …`).
 - A board in the hub's git directory (shared by every worktree, never committed) records which worktree
@@ -246,10 +251,10 @@ and the epics nothing blocks. Then totals, remaining ranges and the finish date;
 blueprint's delivery plan (§16.2), each a bar of its epics sized by acceptance criteria, with its exit
 criteria and a P50–P90 finish; every live session (what it is doing, or how long it has waited for you);
 the epics grouped by sprint, with their size, the critical path and what each waits for and unlocks,
-expandable to stories and tasks with their repositories, branches and gates; a timeline by sprint; where
-each epic's time went; what an acceptance criterion has cost in each finished epic; and which epics touch
-each repository. With several blueprints, tabs pick one, and the All tab folds each blueprint into one
-row. For Claude Code's status line, add to `.claude/settings.json`:
+expandable to stories and tasks with their repositories, branches and gates, and the retired epics last,
+muted; a timeline by sprint; where each epic's time went; what an acceptance criterion has cost in each
+finished epic; and which epics touch each repository. With several blueprints, tabs pick one, and the
+All tab folds each blueprint into one row. For Claude Code's status line, add to `.claude/settings.json`:
 
 ```json
 {"statusLine": {"type": "command", "command": "python3 .specify/extensions/blueprint/scripts/blueprint.py statusline"}}
@@ -351,7 +356,7 @@ blueprint.py migrate [--apply]              # upgrade a 0.4 project
 
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.6`).
+1. Update the extension (`specify extension add … v0.5.7`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not
