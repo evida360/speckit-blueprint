@@ -6,17 +6,24 @@ time split into model and tool time, the time it waited for the user, tokens, co
 levels, phases, repositories touched, task ticks and story times. Summaries are idempotent: the whole
 transcript is read again each time.
 
+Work belongs to the feature active in the session's checkout (`.specify/feature.json`) at the time, and to
+no epic when that feature was not compiled from a blueprint: reading an epic's files or naming it does not
+make the work its. The hook records the active feature at the end of every turn; a compile or activate the
+session ran, or Spec Kit's report of the active feature (check-prerequisites), marks the moment it changed.
+
 Transcripts are Claude Code's own record, not a public API: every field is read defensively and the
 Claude Code version is kept with each summary.
 """
 
 from __future__ import annotations
 
+import bisect
 import datetime as _dt
 import json
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 
 from .core import TRACE_FILE, read_trace
@@ -35,9 +42,18 @@ TICK_RE = re.compile(r"-\s*\[[xX]\]\s*(T\d+)([^\n]*)")
 OPEN_RE = re.compile(r"-\s*\[ \]\s*(T\d+)")
 SEED_STORY_RE = re.compile(r"\b(?:[A-Za-z][A-Za-z0-9]*:)?(E\d{2}-S\d{2})-T\d+")
 US_RE = re.compile(r"\[US(\d+)\]")
-COMPILE_RE = re.compile(r"blueprint\.py[\"']?\s+(?:compile|activate)\s+([^\s;&|]+)")
+ACTIVATE_RE = re.compile(r"blueprint\.py[\"']?\s+(?:compile|activate)\s+([^\s;&|]+)")
+BLUEPRINT_OPT_RE = re.compile(r"--blueprint[=\s]+([^\s;&|]+)")
+FEATURE_DIR_RE = re.compile(r"\"feature_directory\"\s*:\s*\"([^\"]+)\"")
+# Spec Kit's scripts report the active feature: check-prerequisites and setup-plan print FEATURE_DIR;
+# create-new-feature (/speckit.specify) makes its new feature active and prints its SPEC_FILE
+SPECKIT_RE = re.compile(r"(?:check-prerequisites|setup-plan|setup-tasks|create-new-feature)\.(?:sh|ps1)")
+SPECKIT_DIR_RE = re.compile(r"\"FEATURE_DIR\"\s*:\s*\"([^\"]+)\"|^FEATURE_DIR:\s*(\S[^\n]*?)\s*$", re.M)
+SPEC_FILE_RE = re.compile(r"\"SPEC_FILE\"\s*:\s*\"([^\"]+)\"")
 FOLDER_NAME_RE = re.compile(r"^\d{3,}-(?:([a-z0-9][a-z0-9-]*?)-)?e(\d{2})-")
 PATH_KEYS = ("file_path", "path", "notebook_path")
+WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+LOOK_AGAIN = 5  # finished sessions a Stop event summarises again, to pick up their cost
 
 
 def parse_ts(s) -> float | None:
@@ -71,6 +87,7 @@ class Ctx:
         self.root, self.cfg = root, cfg
         self.default = default_id(cfg)
         self.specs = cfg.get("specs_dir", "specs")
+        self.specs_dirs = sorted({self.specs} | {bp_config(cfg, bid)["specs_dir"] for bid in cfg["blueprints"]})
         self.folder_re = re.compile(r"(?:^|[/\s\"'`=(])" + re.escape(self.specs) + r"/(\d{3,}-[A-Za-z0-9._-]+?)(?=/|[\s\"'`)]|$)")
         self.folders: dict = {}
         self.stories: dict = {}
@@ -83,7 +100,9 @@ class Ctx:
                         key = f"{trace_blueprint_id(cfg, t) or bid}:{t['epic']}"
                         self.folders[d.name] = key
                         self.stories[key] = list((t.get("acs") or {}).keys())
-        for key, e in load_board(root).get("epics", {}).items():
+        board = load_board(root)
+        self.sessions = board.get("sessions", {})
+        for key, e in board.get("epics", {}).items():
             if e.get("feature"):
                 self.folders.setdefault(Path(e["feature"]).name, key)
         reg = registry(cfg, root)
@@ -91,7 +110,7 @@ class Ctx:
         for name, r in reg.items():
             paths.append((str(Path(r["main_path"])), name))
             paths.append((str(Path(r["path"])), name))
-        for e in load_board(root).get("epics", {}).values():
+        for e in board.get("epics", {}).values():
             for name, rr in (e.get("repositories") or {}).items():
                 if rr.get("worktree"):
                     paths.append((str(Path(rr["worktree"])), name))
@@ -112,18 +131,58 @@ class Ctx:
         bid = m.group(1) if m.group(1) in self.cfg["blueprints"] else self.default
         return f"{bid}:E{m.group(2)}"
 
-    def feature_in(self, text: str) -> str | None:
-        m = self.folder_re.search(text)
-        if m:
-            return self.key_of_folder(m.group(1)) or None
-        m = COMPILE_RE.search(text)
-        if m and "/" not in m.group(1):
-            try:
-                bid, ref = split_qualified(self.cfg, m.group(1))
-            except Exception:  # noqa: BLE001
-                return None
-            num = re.sub(r"\D", "", ref)
-            return f"{bid or self.default}:E{int(num):02d}" if num else None
+    def active_key(self, folder: str | None, worktree: str | None = None) -> str:
+        """The epic an active feature folder belongs to; "" for a folder not compiled from a blueprint.
+        Unlike `key_of_folder`, a name that only looks like an epic's (`023-desk-e05-hotfix`) is none."""
+        if not folder:
+            return ""
+        name = Path(folder).name
+        if name in self.folders:
+            return self.folders[name]
+        t = read_trace(Path(worktree) / folder) if worktree else None
+        if t and t.get("epic"):
+            return f"{trace_blueprint_id(self.cfg, t) or self.default}:{t['epic']}"
+        return ""
+
+    def folder_of(self, path: str, bases: list) -> str | None:
+        """`specs/<folder>` when `path` lies in a feature folder of one of these checkouts."""
+        paths = {path, os.path.realpath(path)}
+        for base in {b for x in bases if x for b in (str(x), os.path.realpath(str(x)))}:
+            for specs in self.specs_dirs:
+                prefix = os.path.join(base, specs) + os.sep
+                for p in paths:
+                    name = p[len(prefix):].split(os.sep, 1)[0] if p.startswith(prefix) else ""
+                    if re.match(r"\d{3,}-", name):
+                        return f"{specs}/{name}"
+        return None
+
+    def activated(self, command: str, output: str, worktree: str | None) -> str | None:
+        """The epic a compile or activate that ran made active ("" for a folder of no epic): the folder
+        its output names, else its argument."""
+        dirs = FEATURE_DIR_RE.findall(output)
+        if dirs:
+            return self.active_key(dirs[-1], worktree)
+        if re.search(r"(?m)^(?:error|usage):", output):
+            return None
+        ref = ACTIVATE_RE.findall(command)[-1].strip("'\"")
+        if "/" in ref:
+            return self.active_key(ref.rstrip("/"), worktree)
+        opt = BLUEPRINT_OPT_RE.search(command)
+        try:
+            bid, ref = split_qualified(self.cfg, ref if ":" in ref or not opt else f"{opt.group(1)}:{ref}")
+        except Exception:  # noqa: BLE001
+            return None
+        num = re.sub(r"\D", "", ref)
+        return f"{bid or self.default}:E{int(num):02d}" if num else None
+
+    def reported(self, output: str, worktree: str | None) -> str | None:
+        """The active feature a Spec Kit script printed ("" for a folder of no epic)."""
+        dirs = [a or b for a, b in SPECKIT_DIR_RE.findall(output)]
+        if dirs:
+            return self.active_key(dirs[-1], worktree)
+        spec = SPEC_FILE_RE.findall(output)
+        if spec and not re.search(r"\"DRY_RUN\"\s*:\s*true", output):
+            return self.active_key(os.path.dirname(spec[-1]), worktree)
         return None
 
     def blueprint_written(self, path: str) -> str | None:
@@ -220,7 +279,61 @@ def subagent_usage(transcript: Path, session_id: str, agent_id: str) -> dict:
     return out
 
 
-def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None = None, write: bool = True) -> dict | None:
+def tool_uses(e: dict) -> list:
+    content = (e.get("message") or {}).get("content")
+    return [c for c in content if isinstance(c, dict) and c.get("type") == "tool_use"] if isinstance(content, list) else []
+
+
+def tool_results(e: dict) -> list:
+    content = (e.get("message") or {}).get("content")
+    return [c for c in content if isinstance(c, dict) and c.get("type") == "tool_result"] if isinstance(content, list) else []
+
+
+def result_text(c: dict, res) -> str:
+    """A tool result's text: its content and, for Bash, its stdout."""
+    content = c.get("content")
+    if isinstance(content, list):
+        content = " ".join(str(x.get("text") or "") for x in content if isinstance(x, dict))
+    return str(content or "") + ("\n" + str(res.get("stdout") or "") if isinstance(res, dict) else "")
+
+
+def load_summary(root: Path, session_id: str) -> dict | None:
+    try:
+        data = json.loads((metrics_dir(root) / "sessions" / f"{session_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def change_points(events: list, seen: list, prompts: list) -> list:
+    """Where the active feature changed, as (time, key, seen) in order. A compile or activate changes it at
+    its time. An observation at the end of a turn that differs from what is known changes it from the
+    start of that turn, since the transcript does not show where. The first point also covers the time
+    before it: as known when it is an observation (nothing changed before it), as a guess when it is a
+    compile (a session that starts by compiling an epic is getting that epic ready)."""
+    points: list = []
+    last_seen = None
+    for t, kind, key in sorted([(t, 0, k) for t, k in events] + [(t, 1, k) for t, k in seen], key=lambda x: (x[0], x[1])):
+        at = t
+        if kind == 1 and points and points[-1][1] != key:
+            after = max(points[-1][0], last_seen if last_seen is not None else points[-1][0])
+            starts = [p for p in prompts if after < p <= t]
+            at = starts[-1] if starts else after + 1e-6
+        if not points or points[-1][1] != key:
+            points.append((at, key, kind == 1))
+        if kind == 1:
+            last_seen = t
+    return points
+
+
+def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None = None, write: bool = True,
+                      active: str | None = None) -> dict | None:
+    """Summarise one transcript. `active` is the feature folder active in the checkout now ("" for none):
+    the Stop hook passes it for the session that is running, and the summary keeps it with the time
+    (`active_seen`). Other callers leave it out: the recorded observations decide, else the board's last
+    record of the session. Within a session, a compile or activate and Spec Kit's own report of the
+    active feature mark the moment it changed; a session the hook never saw also counts writes into a
+    feature folder."""
     entries = [e for e in read_jsonl(transcript) if parse_ts(e.get("timestamp")) is not None or e.get("type") == "cost-state"]
     timed = [e for e in entries if parse_ts(e.get("timestamp")) is not None]
     if not timed:
@@ -229,22 +342,97 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
     session_id = next((e.get("sessionId") for e in entries if e.get("sessionId")), transcript.stem)
     cwd = next((e.get("cwd") for e in timed if e.get("cwd")), str(root))
     version = next((e.get("version") for e in reversed(timed) if e.get("version")), None)
+    end_t = parse_ts(timed[-1].get("timestamp"))
+
+    prev = load_summary(root, session_id) or {}
+    seen = [[x[0], x[1] or ""] for x in prev.get("active_seen") or []
+            if isinstance(x, list) and len(x) == 2 and isinstance(x[0], (int, float))]
+    worktree = prev.get("worktree")
+    if active is not None:
+        worktree = str(root.resolve())
+        if not seen or seen[-1][1] != active:
+            seen.append([max(end_t, seen[-1][0]) if seen else end_t, active])
+    elif not seen and session_id in ctx.sessions:
+        rec = ctx.sessions[session_id]
+        seen = [[end_t, rec.get("feature") or ""]]
+        worktree = worktree or rec.get("worktree")
+    worktree = worktree or cwd
+
+    # Pass 1: the phases, where the active feature changed, the blueprint each discovery or amendment wrote
+    phase, stretch = "other", 0
+    stretch_bp: dict = {}  # stretch -> the first blueprint it wrote
+    pre: list = []  # per timed entry: (phase, stretch) before its own changes
+    post: list = []  # and after them
+    events: list = []
+    prompts: list = []
+    acts: dict = {}  # Bash tool_use id -> a compile or activate, or a Spec Kit script that reports the feature
+
+    def to_phase(new: str) -> None:
+        nonlocal phase, stretch
+        if new != phase:
+            phase, stretch = new, stretch + 1
+
+    for e in timed:
+        t = parse_ts(e.get("timestamp"))
+        pre.append((phase, stretch))
+        if is_prompt(e):
+            prompts.append(t)
+            m = PHASE_RE.search(text_of(e))
+            if m:
+                to_phase(PHASE_OF[m.group(1)])
+        elif e.get("type") == "assistant":
+            for c in tool_uses(e):
+                name, inp = c.get("name"), c.get("input") or {}
+                m = PHASE_RE.search(json.dumps(inp, ensure_ascii=False)) if name in ("Skill", "SlashCommand") else None
+                if m:
+                    to_phase(PHASE_OF[m.group(1)])
+                path = next((str(inp.get(k)) for k in PATH_KEYS if inp.get(k)), "")
+                if name in WRITE_TOOLS and path:
+                    bid = ctx.blueprint_written(path)
+                    if bid:
+                        stretch_bp.setdefault(stretch, bid)
+                    folder = None if seen else ctx.folder_of(path, [worktree, cwd, str(root)])
+                    if folder:  # the hook never saw this session: a write into a feature folder
+                        events.append((t, ctx.active_key(folder, worktree)))
+                cmd = str(inp.get("command") or "") if name == "Bash" else ""
+                if ACTIVATE_RE.search(cmd) or SPECKIT_RE.search(cmd):
+                    acts[c.get("id")] = cmd
+        elif e.get("type") == "user":
+            for c in tool_results(e):
+                cmd = acts.pop(c.get("tool_use_id"), None)
+                if cmd and not c.get("is_error"):
+                    out = result_text(c, e.get("toolUseResult"))
+                    key = ctx.activated(cmd, out, worktree) if ACTIVATE_RE.search(cmd) else ctx.reported(out, worktree)
+                    if key is not None:
+                        events.append((t, key))
+        post.append((phase, stretch))
+
+    points = change_points(events, [(t, ctx.active_key(f, worktree)) for t, f in seen], prompts)
+    times = [p[0] for p in points]
+
+    def key_of(state: tuple, t: float) -> str:
+        """The active epic's key. Without one ("" or, before the session's first compile, only a guess), a
+        discovery or amendment that wrote its blueprint belongs to `<blueprint>:discover|amend`."""
+        i = bisect.bisect_right(times, t) - 1
+        key, known = (points[max(i, 0)][1], i >= 0 or points[0][2]) if points else ("", False)
+        ph, st = state
+        if (key and known) or ph not in ("discover", "amend") or st not in stretch_bp:
+            return key
+        return f"{stretch_bp[st]}:{ph}"
+
+    # Pass 2: time, tokens, tools and ticks, each to the key of its moment
     per: dict = {}
-    feature: str | None = None
-    phase = "other"
-    pending: list = []  # (kind, payload) waiting for the turn's first feature
-    tools: dict = {}  # tool_use id -> (key, start, repo)
+    tools: dict = {}  # tool_use id -> (key, start, repo, name)
     session_cost = None
+    covered: dict = {}  # key -> weighted tokens the session's cost record covers
     in_turn = False
     prev_t = None
+    i = -1
 
     def agg(key: str) -> dict:
         return per.setdefault(key, new_agg())
 
-    def credit(key: str | None, kind: str, payload) -> None:
-        if key is None:
-            pending.append((kind, payload))
-            return
+    def credit(key: str, kind: str, payload) -> None:
         a = agg(key)
         if kind == "active":
             s, e_, ph = payload
@@ -278,98 +466,69 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
             for lv, n in sub["efforts"].items():
                 bump(s["efforts"], lv, n)
 
-    def flush(key: str) -> None:
-        while pending:
-            kind, payload = pending.pop(0)
-            credit(key, kind, payload)
-
-    def set_feature(key: str) -> None:
-        nonlocal feature
-        feature = key
-        flush(key)
-
     for e in entries:
         if e.get("type") == "cost-state":
             try:
                 session_cost = float(e.get("totalCostUSD"))
             except (TypeError, ValueError):
-                pass
+                continue
+            covered = {k: a["weighted"] for k, a in per.items()}  # the total so far: the work before it
             continue
         t = parse_ts(e.get("timestamp"))
-        if t is None:
-            continue
+        i += 1
         if is_prompt(e):
             if prev_t is not None and in_turn:
-                gap = max(0.0, t - prev_t)
-                key = feature if feature is not None else ""
-                a = agg(key)
-                a["wait_s"] += min(gap, WAIT_CAP_S)
+                a = agg(key_of(pre[i], prev_t))
+                a["wait_s"] += min(max(0.0, t - prev_t), WAIT_CAP_S)
                 a["gates"] += 1
-            m = PHASE_RE.search(text_of(e))
-            if m:
-                phase = PHASE_OF[m.group(1)]
-            hit = ctx.feature_in(text_of(e))
-            if hit:
-                set_feature(hit)
-            if feature is not None:
-                agg(feature)["turns"] += 1
+            agg(key_of(post[i], t))["turns"] += 1
             in_turn, prev_t = True, t
             continue
         if prev_t is not None and in_turn and t > prev_t:
-            credit(feature, "active", (prev_t, t, phase))
+            credit(key_of(pre[i], prev_t), "active", (prev_t, t, pre[i][0]))
         prev_t = max(prev_t or t, t)
         if e.get("type") == "assistant":
             msg = e.get("message") or {}
-            for c in msg.get("content") or []:
-                if not isinstance(c, dict) or c.get("type") != "tool_use":
-                    continue
+            key = key_of(post[i], t)
+            for c in tool_uses(e):
                 inp = c.get("input") or {}
-                blob = json.dumps(inp, ensure_ascii=False)
-                m = PHASE_RE.search(blob)
-                if m and c.get("name") in ("Skill", "SlashCommand"):
-                    phase = PHASE_OF[m.group(1)]
                 path = next((str(inp.get(k)) for k in PATH_KEYS if inp.get(k)), "")
-                bid = ctx.blueprint_written(path) if c.get("name") in ("Write", "Edit", "MultiEdit") and path else None
-                if bid and feature is None and phase in ("discover", "amend"):
-                    set_feature(f"{bid}:{phase}")
-                hit = ctx.feature_in(blob)
-                if hit and hit != feature:
-                    set_feature(hit)
                 repo = ctx.repo_of(path or str(inp.get("command") or ""), cwd) or (ctx.hub if c.get("name") in ("Bash", "Edit", "Write", "MultiEdit", "Read") else None)
-                tools[c.get("id")] = (feature, t, repo, c.get("name"))
-                if path.endswith("/tasks.md") or path.endswith("tasks.md"):
+                tools[c.get("id")] = (key, t, repo, c.get("name"))
+                if path.endswith("tasks.md"):
                     pairs = [(inp.get("old_string") or "", inp.get("new_string") or "")] + [
                         (x.get("old_string") or "", x.get("new_string") or "") for x in inp.get("edits") or [] if isinstance(x, dict)]
                     folder = ctx.folder_re.search(path)
-                    key = ctx.key_of_folder(folder.group(1)) if folder else feature
+                    tkey = ctx.key_of_folder(folder.group(1)) if folder else key
                     for old, new in pairs:
                         opened = set(OPEN_RE.findall(old))
                         for tid, rest in TICK_RE.findall(new):
-                            if tid in opened and key:
-                                agg(key)["ticks"].append({"task": tid, "story": story_of(ctx, key, rest), "t": t})
-            credit(feature, "tokens", (usage_of(msg), msg.get("model"), e.get("effort")))
+                            if tid in opened and tkey:
+                                agg(tkey)["ticks"].append({"task": tid, "story": story_of(ctx, tkey, rest), "t": t})
+            credit(key, "tokens", (usage_of(msg), msg.get("model"), e.get("effort")))
         elif e.get("type") == "user":
-            content = (e.get("message") or {}).get("content")
-            for c in content if isinstance(content, list) else []:
-                if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in tools:
+            for c in tool_results(e):
+                if c.get("tool_use_id") in tools:
                     key, start, repo, name = tools.pop(c["tool_use_id"])
                     credit(key, "tool", (repo, max(0.0, t - start)))
                     res = e.get("toolUseResult")
                     if name in ("Agent", "Task") and isinstance(res, dict) and res.get("agentId"):
                         credit(key, "sub", (res.get("agentType"), subagent_usage(transcript, session_id, res["agentId"])))
-    if pending:
-        flush("")
     for a in per.values():
         a["tool_s"] = min(a["tool_s"], a["active_s"])
         a["model_s"] = a["active_s"] - a["tool_s"]
         a["stories"] = story_times(a)
-    total_w = sum(a["weighted"] for a in per.values()) or 0.0
-    for a in per.values():
-        a["cost_usd"] = (session_cost * a["weighted"] / total_w) if (session_cost is not None and total_w) else None
+    # The cost record is the session's total so far: shared out by weighted tokens over the work before
+    # it. Work after it (a session resumed after the record) is left to `collect`: the learned rate, or unknown.
+    total_w = sum(covered.values()) if session_cost is not None else 0.0
+    for k, a in per.items():
+        w = covered.get(k, 0.0) if total_w > 0 else 0.0
+        a["cost_usd"] = session_cost * w / total_w if w > 0 else None
+        a["weighted_unpriced"] = max(0.0, a["weighted"] - w)
     out = {
-        "session_id": session_id, "transcript": str(transcript), "cwd": cwd, "version": version,
+        "session_id": session_id, "transcript": str(transcript), "cwd": cwd, "worktree": worktree, "version": version,
         "start": timed[0].get("timestamp"), "end": timed[-1].get("timestamp"), "cost_usd": session_cost,
-        "summarised_at": iso(_dt.datetime.now().timestamp()), "features": per,
+        "active_seen": seen, "summarised_at": iso(_dt.datetime.now().timestamp()), "features": per,
     }
     if write:
         d = metrics_dir(root) / "sessions"
@@ -441,10 +600,20 @@ def merge_intervals(intervals: list) -> list:
     return out
 
 
+def unpriced(a: dict) -> float:
+    """Weighted tokens of a feature aggregate that no cost record covers (summaries before 0.5.4 priced
+    a feature in whole or not at all)."""
+    if "weighted_unpriced" in a:
+        return float(a.get("weighted_unpriced") or 0.0)
+    return float(a.get("weighted") or 0.0) if a.get("cost_usd") is None else 0.0
+
+
 def combine(parts: list) -> dict:
-    """Sum feature aggregates from several sessions."""
+    """Sum feature aggregates from several sessions. The cost is None (unknown) when no part has one; a
+    sum that includes estimated or unknown parts is marked `cost_estimated` (shown with "+")."""
     total = new_agg()
-    total.update(model_s=0.0, cost_usd=0.0, stories={}, sessions=0, cost_estimated=False)
+    total.update(model_s=0.0, cost_usd=None, stories={}, sessions=0, cost_estimated=False)
+    unknown = False
     intervals = []
     for p in parts:
         total["sessions"] += 1
@@ -468,12 +637,16 @@ def combine(parts: list) -> dict:
                 bump(t["efforts"], lv, n)
         total["ticks"] += p.get("ticks") or []
         intervals += p.get("intervals") or []
-        if p.get("cost_usd") is None or p.get("cost_estimated"):
-            total["cost_estimated"] = True
-        total["cost_usd"] += p.get("cost_usd") or 0.0
+        if p.get("cost_usd") is not None:
+            total["cost_usd"] = (total["cost_usd"] or 0.0) + p["cost_usd"]
+            total["cost_estimated"] = total["cost_estimated"] or bool(p.get("cost_estimated")) or unpriced(p) > 0
+        elif (p.get("weighted") or 0) > 0:
+            unknown = True
         for k, fn in (("first", min), ("last", max)):
             if p.get(k) is not None:
                 total[k] = p[k] if total[k] is None else fn(total[k], p[k])
+    if unknown and total["cost_usd"] is not None:
+        total["cost_estimated"] = True
     merged = merge_intervals(intervals)
     total["intervals"] = merged
     total["elapsed_active_s"] = sum(e - s for s, e in merged)
@@ -487,25 +660,33 @@ def brief_line(m: dict) -> str:
         return "no sessions recorded yet"
     models = ", ".join(sorted(m["models"], key=lambda k: -m["models"][k])[:2]) or "—"
     efforts = "/".join(sorted(m["efforts"], key=lambda k: -m["efforts"][k])[:2]) or "—"
-    cost = fmt_cost(m["cost_usd"]) + ("+" if m.get("cost_estimated") else "")
+    cost = cost_text(m.get("cost_usd"), m.get("cost_estimated"))
     return (f"agent {duration(m['agent_s'])} (model {duration(m['model_s'])}, tools {duration(m['tool_s'])}) · "
             f"{m['gates']} human gate{'' if m['gates'] == 1 else 's'} (waited {duration(m['wait_s'])}) · calendar {duration(m['calendar_s'], True)} · "
             f"{cost} · {fmt_tokens(sum(m['tokens'].values()))} tokens · {models} · effort {efforts}")
 
 
+def cost_text(usd: float | None, estimated: bool = False) -> str:
+    return "cost unknown" if usd is None else fmt_cost(usd) + ("+" if estimated else "")
+
+
 def collect(root: Path) -> dict:
-    """key -> list of feature aggregates across every recorded session. A session still running has no
-    cost total yet: its parts are priced at the rate (dollars per weighted token) of the finished ones."""
+    """key -> list of feature aggregates across every recorded session. Work no cost record covers (a
+    session still running, or what a session did after it was resumed) is priced at the rate, dollars per
+    weighted token, of the work that has one; with no priced work at all its cost stays unknown."""
     sessions = load_sessions(root)
-    priced = [a for s in sessions for a in (s.get("features") or {}).values() if a.get("cost_usd") is not None]
-    weight = sum(a.get("weighted") or 0 for a in priced)
-    rate = (sum(a["cost_usd"] for a in priced) / weight) if weight else None
+    parts = [(key, a) for s in sessions for key, a in (s.get("features") or {}).items()]
+    cost = weight = 0.0
+    for _, a in parts:
+        if a.get("cost_usd") is not None:
+            cost += a["cost_usd"]
+            weight += (a.get("weighted") or 0.0) - unpriced(a)
+    rate = cost / weight if weight > 0 else None
     out: dict = {}
-    for s in sessions:
-        for key, a in (s.get("features") or {}).items():
-            if a.get("cost_usd") is None and rate is not None:
-                a = {**a, "cost_usd": round((a.get("weighted") or 0) * rate, 4), "cost_estimated": True}
-            out.setdefault(key, []).append(a)
+    for key, a in parts:
+        if rate is not None and unpriced(a) > 0:
+            a = {**a, "cost_usd": round((a.get("cost_usd") or 0.0) + unpriced(a) * rate, 4), "cost_estimated": True}
+        out.setdefault(key, []).append(a)
     return out
 
 
@@ -550,7 +731,7 @@ def write_epic_summary(root: Path, bcfg: dict, epic: dict, data: dict) -> None:
         raise SystemExit(f"error: {epic['id']} is not compiled")
     m = data["metrics"]
     keep = {k: m.get(k) for k in ("agent_s", "model_s", "tool_s", "wait_s", "gates", "calendar_s", "cost_usd",
-                                  "tokens", "models", "efforts", "phases", "repos", "stories", "sessions")}
+                                  "cost_estimated", "tokens", "models", "efforts", "phases", "repos", "stories", "sessions")}
     (d / "metrics.json").write_text(json.dumps({"epic": epic["id"], **keep, "brief": data["brief"]}, indent=2,
                                                ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -575,3 +756,66 @@ def backfill(root: Path, cfg: dict, dirs: list | None = None) -> dict:
                 with_work += any(k and ":" in k for k in s["features"])
     return {"dirs": [str(d) for d in dirs], "sessions": seen, "sessions_with_blueprint_work": with_work,
             "store": str(metrics_dir(root))}
+
+
+def tail_entries(path: Path, size: int = 96_000) -> list:
+    """The JSON entries in the last `size` bytes of a transcript."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            n = fh.tell()
+            fh.seek(max(0, n - size))
+            data = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for ln in data.split("\n")[1:] if n > size else data.split("\n"):
+        try:
+            e = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+def ended_with_cost(transcript: Path) -> bool:
+    """Whether the session has ended: after its conversation, the transcript's last record is the cost."""
+    last = None
+    for e in tail_entries(transcript, 65_536):
+        if e.get("type") == "cost-state":
+            last = "cost"
+        elif e.get("type") in ("user", "assistant"):
+            last = "conversation"
+    return last == "cost"
+
+
+def refresh_finished(root: Path, cfg: dict, ctx: Ctx | None = None, skip: str | None = None,
+                     limit: int = LOOK_AGAIN, days: int = 7) -> int:
+    """Summarise again the sessions of the last `days` that ended after their last summary. Claude Code
+    writes a session's cost when the session ends, after its last Stop event: the hook never sees it."""
+    d = metrics_dir(root) / "sessions"
+    files = []
+    for p in d.glob("*.json") if d.is_dir() else []:
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        if p.stem != skip and mtime > time.time() - days * 86400:
+            files.append((mtime, p.stem))
+    done = 0
+    for summarised, sid in sorted(files, reverse=True):
+        try:  # the transcript's path is near the start of the summary: no need to parse all of it
+            with open(d / f"{sid}.json", encoding="utf-8", errors="replace") as fh:
+                m = re.search(r"\"transcript\":\s*(\"(?:[^\"\\]|\\.)*\")", fh.read(4096))
+            t = Path(json.loads(m.group(1))) if m else None
+            changed = t is not None and t.is_file() and t.stat().st_mtime > summarised + 1
+        except (OSError, ValueError):
+            continue
+        if changed and ended_with_cost(t):
+            ctx = ctx or Ctx(root, cfg)
+            summarise_session(root, cfg, t, ctx)
+            done += 1
+            if done >= limit:
+                break
+    return done

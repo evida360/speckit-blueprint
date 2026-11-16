@@ -13,7 +13,8 @@ This command exists so Spec Kit can register `blueprint.py hook` for Claude Code
 - before a tool runs, blocks hand edits of compiled files and managed blocks, writes of a blueprint or a
   DONE review below the guaranteed effort, a `require-effort` command below it, and a compile that would
   switch the active feature under another live session in the same worktree;
-- when a turn stops, summarises the session's transcript into the local metrics.
+- when a turn stops, summarises the session's transcript into the local metrics, its work counting for
+  the feature active in the checkout, and reads again the sessions that ended since, for their cost.
 
 If you were invoked directly: explain this and stop. The guard can be switched off with `guard: false`
 and metrics with `metrics: off` in `.specify/extensions/blueprint/blueprint-config.yml`.

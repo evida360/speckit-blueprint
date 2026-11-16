@@ -21,7 +21,7 @@ from .model import Blueprint
 from .repos import facts, main_root, registry
 from .board import live, load as load_board
 from .status import project_status
-from .metrics import Ctx, collect, combine, parse_ts, transcript_dir
+from .metrics import Ctx, collect, combine, parse_ts, tail_entries, transcript_dir
 from .estimate import epic_acs, estimate, history
 from .units import cost as fmt_cost, duration
 
@@ -122,26 +122,6 @@ def epic_entry(root: Path, cfg: dict, bcfg: dict, bp: Blueprint, e: dict, row: d
     }
 
 
-def tail_entries(path: Path, size: int = 96_000) -> list:
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, 2)
-            n = fh.tell()
-            fh.seek(max(0, n - size))
-            data = fh.read().decode("utf-8", errors="replace")
-    except OSError:
-        return []
-    out = []
-    for ln in data.split("\n")[1:] if n > size else data.split("\n"):
-        try:
-            e = json.loads(ln)
-        except ValueError:
-            continue
-        if isinstance(e, dict):
-            out.append(e)
-    return out
-
-
 def activity(transcript: Path) -> dict:
     """What a live session is doing now, from the end of its transcript."""
     entries = [e for e in tail_entries(transcript) if parse_ts(e.get("timestamp"))]
@@ -181,7 +161,7 @@ def session_rows(root: Path, cfg: dict, board: dict, ctx: Ctx) -> list:
             continue
         t = Path(s["transcript"])
         feature = s.get("feature")
-        key = ctx.key_of_folder(Path(feature).name) if feature else None
+        key = ctx.active_key(feature, s.get("worktree")) or None
         story = None
         if feature and s.get("worktree"):
             rows = read_tasks(Path(s["worktree"]) / feature / "tasks.md", ctx.stories.get(key or "", []), {})
@@ -217,7 +197,7 @@ def build_state(root: Path, cfg: dict) -> dict:
             "migration_needed": st.get("migration_needed"), "epics": epics,
             "acs_total": sum(e["acs"] for e in epics), "acs_done": sum(e["acs"] for e in epics if e["state"] == "done"),
             "remaining": est.get("remaining"), "confidence": est.get("confidence"), "history": est.get("history"),
-            "discovery": {k: {f: v.get(f) for f in ("agent_s", "cost_usd", "wait_s", "sessions")} | {"tokens": sum(v["tokens"].values())}
+            "discovery": {k: {f: v.get(f) for f in ("agent_s", "cost_usd", "cost_estimated", "wait_s", "sessions")} | {"tokens": sum(v["tokens"].values())}
                           for k, v in disc.items()},
         })
     repos = []
@@ -226,16 +206,18 @@ def build_state(root: Path, cfg: dict) -> dict:
                     if e["state"] in ACTIVE_STATES and any(x["name"] == name for x in e["repositories"])]
         repos.append({"name": name, "path": r["main_path"], "hub": r["hub"], "gate": r.get("gate"), "epics_in_progress": touching})
     every = [e for b in blueprints for e in b["epics"]]
+    worked = [e["actual"] for e in every if e["actual"].get("sessions")] \
+        + [d for b in blueprints for d in (b.get("discovery") or {}).values() if d.get("sessions")]
+    known = [x["cost_usd"] for x in worked if x.get("cost_usd") is not None]
     totals = {
         "epics": len(every), "epics_done": sum(e["state"] == "done" for e in every),
         "acs": sum(e["acs"] for e in every), "acs_done": sum(e["acs"] for e in every if e["state"] == "done"),
         "agent_s": sum(e["actual"]["agent_s"] or 0 for e in every)
                    + sum(d.get("agent_s") or 0 for b in blueprints for d in (b.get("discovery") or {}).values()),
-        "cost_usd": sum(e["actual"]["cost_usd"] or 0 for e in every)
-                    + sum(d.get("cost_usd") or 0 for b in blueprints for d in (b.get("discovery") or {}).values()),
+        "cost_usd": sum(known) if known else None,  # None: no recorded cost yet (unknown, not zero)
         "tokens": sum(e["actual"]["tokens"] or 0 for e in every)
                   + sum(d.get("tokens") or 0 for b in blueprints for d in (b.get("discovery") or {}).values()),
-        "cost_estimated": any(e["actual"].get("cost_estimated") for e in every),
+        "cost_estimated": bool(known) and (len(known) < len(worked) or any(x.get("cost_estimated") for x in worked)),
         "in_progress": sum(e["state"] in ACTIVE_STATES for e in every),
     }
     firsts = [e["actual"]["first"] for e in every if e["actual"]["first"]]

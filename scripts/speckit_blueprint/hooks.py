@@ -4,7 +4,8 @@ The event's JSON arrives on stdin; `hook_event_name` picks the handler:
 - SessionStart: register the session on the board and print the short status block.
 - PreToolUse: the guard (compiled files, managed blocks, guaranteed effort for blueprint and review
   writes) and, for Bash, `require-effort` and the one-epic-per-worktree check for compile/activate.
-- Stop: register the session and summarise its transcript into the metrics store.
+- Stop: register the session and summarise its transcript into the metrics store, with the feature
+  active now; summarise again the sessions that ended since (their cost arrives when they end).
 
 A hook never blocks a session because of its own failure: errors end in exit 0.
 """
@@ -98,11 +99,15 @@ def session_start(root: Path, cfg: dict, payload: dict) -> int:
 
 
 def stop(root: Path, cfg: dict, payload: dict) -> int:
+    """The turn's work goes to the feature active in this checkout (none when it is not a blueprint
+    epic's); sessions that ended since their last summary are read again for the cost they recorded."""
     register_session(root, payload.get("session_id", ""), session_info(root, payload))
     if cfg.get("metrics", "local") != "off" and payload.get("transcript_path"):
-        from .metrics import summarise_session
+        from .metrics import Ctx, refresh_finished, summarise_session
 
-        summarise_session(root, cfg, Path(payload["transcript_path"]))
+        ctx = Ctx(root, cfg)
+        summarise_session(root, cfg, Path(payload["transcript_path"]), ctx, active=active_feature(root) or "")
+        refresh_finished(root, cfg, ctx, skip=payload.get("session_id"))
     return 0
 
 

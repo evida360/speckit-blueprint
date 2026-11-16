@@ -3,7 +3,8 @@
 Size is known before building (ACs, stories, repositories); rates come from finished epics (agent time,
 cost, tokens, waiting and calendar time per AC). An epic's estimate is a P50–P90 range of rate × ACs. What
 remains is a seeded Monte Carlo over the remaining epics, scheduled on their `Depends on` graph with the
-parallelism seen so far. Fewer than three finished epics: low confidence.
+parallelism seen so far. Fewer than three finished epics: low confidence. A cost no session recorded is
+unknown, never zero: cost ranges come from the finished epics with a cost, or are None.
 """
 
 from __future__ import annotations
@@ -14,6 +15,10 @@ import random
 from .metrics import collect, combine
 from .status import project_status
 from .units import cost as fmt_cost, duration, span
+
+
+def cost_span(pair) -> str:
+    return span(*pair, fmt=fmt_cost) if pair else "cost unknown"
 
 RATE_KEYS = ("agent_s", "cost_usd", "tokens", "wait_s", "calendar_s")
 RUNS = 2000
@@ -33,7 +38,7 @@ def epic_acs(epic: dict) -> int:
 
 
 def measured(m: dict) -> dict:
-    return {"agent_s": m["agent_s"], "cost_usd": m["cost_usd"] or 0.0, "tokens": float(sum(m["tokens"].values())),
+    return {"agent_s": m["agent_s"], "cost_usd": m["cost_usd"], "tokens": float(sum(m["tokens"].values())),
             "wait_s": m["wait_s"], "calendar_s": m["calendar_s"]}
 
 
@@ -59,7 +64,7 @@ def history(root, cfg: dict, bcfg: dict, bp, parts: dict | None = None) -> list:
             m = combine(parts.get(f"{bid}:{e['id']}", []))
             if e["id"] in done and m["sessions"] and m["agent_s"] > 0:
                 acs = epic_acs(e)
-                rates.append({"epic": f"{bid}:{e['id']}", **{k: v / acs for k, v in measured(m).items()}})
+                rates.append({"epic": f"{bid}:{e['id']}", **{k: None if v is None else v / acs for k, v in measured(m).items()}})
     return rates
 
 
@@ -68,9 +73,12 @@ def confidence(n: int) -> str:
 
 
 def epic_range(rates: list, acs: int) -> dict:
-    out = {}
+    out: dict = {}
     for k in RATE_KEYS:
-        vals = [r[k] * acs for r in rates]
+        vals = [r[k] * acs for r in rates if r.get(k) is not None]
+        if not vals:  # no finished epic recorded it (a cost): unknown
+            out[k] = None
+            continue
         p50, p90 = quantile(vals, 0.5), quantile(vals, 0.9)
         if len(vals) == 1:
             p90 = p50 * 1.5  # one finished epic: widen rather than pretend to know
@@ -114,7 +122,7 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
         out = {"blueprint_id": bid, "epic": epic["id"], "acs": epic_acs(epic), "history": len(rates), "confidence": conf}
         if rates:
             out.update(epic_range([r for r in rates if r["epic"] != f"{bid}:{epic['id']}"] or rates, epic_acs(epic)))
-            out["brief"] = (f"agent {span(*out['agent_s'])} · {span(*out['cost_usd'], fmt=fmt_cost)} · "
+            out["brief"] = (f"agent {span(*out['agent_s'])} · {cost_span(out['cost_usd'])} · "
                             f"calendar {span(*out['calendar_s'], fmt=lambda s: duration(s, True))} ({conf} confidence, {len(rates)} finished epic{'' if len(rates) == 1 else 's'})")
         else:
             out["brief"] = "no finished epic with recorded sessions yet: no estimate"
@@ -135,6 +143,7 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
     # status's delivery order: each epic after the open ones it depends on, so the schedule waits for them
     order = [x for x in (st.get("epic_order") or {}).get("epics", []) if x in deps] or [e["id"] for e in remaining]
     rng = random.Random(42)
+    priced = [r for r in rates if r["cost_usd"] is not None]
     sums = {"agent_s": [], "cost_usd": [], "tokens": [], "finish_s": []}
     for _ in range(RUNS):
         totals = {"agent_s": 0.0, "cost_usd": 0.0, "tokens": 0.0}
@@ -142,21 +151,24 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
         for e in remaining:
             r = rng.choice(rates)
             acs = epic_acs(e)
-            for key in totals:
+            for key in ("agent_s", "tokens"):
                 totals[key] += max(0.0, r[key] * acs - spent[e["id"]][key])
+            if priced:  # an epic finished without a recorded cost lends the cost of one that has it
+                rc = r if r["cost_usd"] is not None else rng.choice(priced)
+                totals["cost_usd"] += max(0.0, rc["cost_usd"] * acs - (spent[e["id"]]["cost_usd"] or 0.0))
             cal[e["id"]] = max(0.0, r["calendar_s"] * acs - spent[e["id"]]["calendar_s"])
         for key in totals:
             sums[key].append(totals[key])
         sums["finish_s"].append(schedule(order, cal, deps, k))
-    if len(rates) < 3:  # too few finished epics to know the spread: widen P90 as for one epic
-        for key in sums:
+    for key in sums:  # too few finished epics to know the spread: widen P90 as for one epic
+        if (len(priced) if key == "cost_usd" else len(rates)) < 3:
             p50 = quantile(sums[key], 0.5)
             sums[key] = sums[key] + [p50 * 1.5] * max(1, len(sums[key]) // 5)
     now = _dt.datetime.now().astimezone()
     fin = [quantile(sums["finish_s"], 0.5), quantile(sums["finish_s"], 0.9)]
     result["remaining"] = {
         "agent_s": [round(quantile(sums["agent_s"], q), 1) for q in (0.5, 0.9)],
-        "cost_usd": [round(quantile(sums["cost_usd"], q), 2) for q in (0.5, 0.9)],
+        "cost_usd": [round(quantile(sums["cost_usd"], q), 2) for q in (0.5, 0.9)] if priced else None,
         "tokens": [round(quantile(sums["tokens"], q)) for q in (0.5, 0.9)],
         "calendar_s": [round(x, 1) for x in fin],
         "finish": [(now + _dt.timedelta(seconds=x)).date().isoformat() for x in fin],
@@ -164,7 +176,7 @@ def estimate(root, cfg: dict, bcfg: dict, bp, epic: dict | None = None, parts: d
         "epics": len(remaining),
     }
     rem = result["remaining"]
-    result["brief"] = (f"{len(remaining)} epics left: agent {span(*rem['agent_s'])} · {span(*rem['cost_usd'], fmt=fmt_cost)} · "
+    result["brief"] = (f"{len(remaining)} epics left: agent {span(*rem['agent_s'])} · {cost_span(rem['cost_usd'])} · "
                        f"finish {rem['finish'][0]}" + ("" if rem["finish"][0] == rem["finish"][1] else f" – {rem['finish'][1]}")
                        + f" ({conf} confidence, {len(rates)} finished epic{'' if len(rates) == 1 else 's'}, {k} at a time)")
     return result

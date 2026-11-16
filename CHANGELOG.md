@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.4 — 2026-11-16
+
+Metrics: work counts for the active feature only, and a cost no session recorded is unknown, not $0.00.
+
+- The stop hook gave a session's time and tokens to the last feature folder its prompts or tool calls
+  named, so reading an epic's files made the session that epic's work, and `estimate` counted it as a
+  finished epic's history: a migration session that read three DESK epics became the history of all
+  three. Work now counts for the feature active in the checkout (`.specify/feature.json`) at the time, and
+  for no epic when that feature was not compiled from a blueprint. The hook records the active feature at
+  the end of every turn; a compile or activate that ran, or Spec Kit's own report of the active feature
+  (`check-prerequisites`, `setup-plan`, `create-new-feature`), marks the moment it changed, and earlier
+  turns keep their epic. Work before a session's first compile still goes to the epic it compiles.
+- Discovery and amendment go to `<blueprint>:discover` / `<blueprint>:amend` while no epic is active; an
+  amendment made while an epic is active counts for that epic, as before.
+- Sessions the hook never saw (recorded before 0.5.4, or read by `metrics --backfill`) use the board's
+  last record of the session's active feature, else compiles, activates, Spec Kit's reports and writes
+  into a feature folder. Reading a folder or naming it never counts.
+- A missing cost was summed as zero, so with no recorded cost `estimate` printed `$0.00` and the dashboard
+  showed $0.00 spent. It is unknown now: `null` in JSON, "cost unknown" in briefs, "unknown" on the
+  dashboard. Cost ranges come from the finished epics that have a cost, and a total with estimated or
+  unknown parts is marked "+".
+- Sessions get their cost once they end. Claude Code records a session's cost (`cost-state`) when the
+  session ends, after its last stop event, so the hook never saw it. Each stop event now also reads again
+  the sessions that ended since their last summary. In a session resumed after its cost was recorded, the
+  record covers the work before it and the rest is priced at the learned rate ("+").
+- After updating, run `blueprint.py metrics --backfill` once: it reads the recorded sessions again with
+  these rules, and with their cost.
+
 ## 0.5.3 — 2026-11-16
 
 - `next` follows the blueprint's epic order. It took the epics as they appear in the file and skipped the

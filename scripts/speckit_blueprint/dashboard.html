@@ -233,6 +233,8 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
   const cal = s => dur(s, true);
   const money = (usd, estimated) => (isNum(usd)
     ? '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (estimated ? '+' : '') : '—');
+  // work recorded without a cost (Claude Code writes it when a session ends) costs "unknown", never $0.00
+  const costOf = (usd, estimated, sessions) => (isNum(usd) ? money(usd, estimated) : num(sessions) ? 'unknown' : '—');
   const tok = n => (!isNum(n) ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)));
   function range(pair, f) {
     const p = arr(pair), lo = isNum(p[0]) ? p[0] : p[1], hi = isNum(p[1]) ? p[1] : p[0];
@@ -314,7 +316,8 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const add = k => [0, 1].map(i => sum(list, r => arr(r[k])[i]));
     const latest = i => list.map(r => arr(r.finish)[i]).filter(Boolean).sort().pop();
     return {
-      agent_s: add('agent_s'), cost_usd: add('cost_usd'), tokens: add('tokens'), epics: sum(list, r => r.epics),
+      agent_s: add('agent_s'), cost_usd: list.some(r => isNum(arr(r.cost_usd)[0])) ? add('cost_usd') : null,
+      tokens: add('tokens'), epics: sum(list, r => r.epics),
       calendar_s: [0, 1].map(i => Math.max(0, ...list.map(r => num(arr(r.calendar_s)[i])))),
       finish: [latest(0), latest(1)], parallelism: Math.max(1, ...list.map(r => num(r.parallelism))),
     };
@@ -336,10 +339,12 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     ]);
     const off = st.metrics === 'off';
     const disc = sel.flatMap(b => Object.values(obj(b.discovery)).map(obj));
-    const estimated = acts.some(a => a.cost_estimated);
-    const spent = off ? card('Spent', '—', ['Metrics are off']) : card('Spent', money(sum(acts, a => a.cost_usd) + sum(disc, d => d.cost_usd), estimated), [
+    const worked = acts.concat(disc).filter(a => num(a.sessions) > 0), priced = worked.filter(a => isNum(a.cost_usd));
+    const estimated = priced.length > 0 && (priced.length < worked.length || priced.some(a => a.cost_estimated));
+    const spentCost = priced.length ? money(sum(priced, a => a.cost_usd), estimated) : worked.length ? 'Cost unknown' : '—';
+    const spent = off ? card('Spent', '—', ['Metrics are off']) : card('Spent', spentCost, [
       `${dur(sum(acts, a => a.agent_s) + sum(disc, d => d.agent_s))} agent time · ${tok(sum(acts, a => a.tokens) + sum(disc, d => d.tokens))} tokens`,
-      estimated ? '+ includes an estimate for sessions still running' : '',
+      estimated ? '+ part of it is estimated or not recorded yet' : worked.length && !priced.length ? 'Claude Code records a session’s cost when the session ends' : '',
     ]);
     const rems = built.map(b => b.remaining).filter(r => r && typeof r === 'object');
     const rem = rems.length > 1 ? mergeRemaining(rems) : rems[0] || null;
@@ -353,7 +358,9 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     const hist = Math.max(0, ...built.map(b => num(b.history)));
     const k = Math.max(1, Math.round(num(rem.parallelism)));
     return [progress, spent,
-      card('Remaining P50 – P90', range(rem.cost_usd, money), [`${range(rem.agent_s, dur)} agent time`, `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`]),
+      isNum(arr(rem.cost_usd)[0])
+        ? card('Remaining P50 – P90', range(rem.cost_usd, money), [`${range(rem.agent_s, dur)} agent time`, `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`])
+        : card('Remaining P50 – P90', range(rem.agent_s, dur), ['Agent time · cost unknown: no finished epic has a recorded cost', `${cap(conf)} confidence · from ${plural(hist, 'finished epic')}`]),
       card('Forecast finish', range(arr(rem.finish).map(ts), fdate), [`${plural(num(rem.epics), 'epic')} left · ${plural(k, 'epic')} at a time${rems.length > 1 ? ' per blueprint' : ''}`,
         isNum(arr(rem.calendar_s)[0]) ? `${range(rem.calendar_s, cal)} of calendar time` : '']),
     ];
@@ -444,7 +451,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
       <span class="c-state" data-label="State"><span class="badge b-${cls}" title="${label} (state: ${e.state || 'unknown'})"><i></i>${label}</span>${note ? html`<span class="meta">${note}</span>` : ''}</span>
       <span class="c-tasks" data-label="Tasks">${tasks}</span>
       <span class="c-num" data-label="Agent time">${num(a.agent_s) > 0 ? dur(a.agent_s) : '—'}${estA ? html`<span class="meta">${estA}</span>` : ''}</span>
-      <span class="c-num" data-label="Cost">${num(a.cost_usd) > 0 ? money(a.cost_usd, a.cost_estimated) : '—'}${estC ? html`<span class="meta">${estC}</span>` : ''}</span>
+      <span class="c-num" data-label="Cost">${costOf(a.cost_usd, a.cost_estimated, a.sessions)}${estC ? html`<span class="meta">${estC}</span>` : ''}</span>
     </summary><div class="epic-body">${epicBody(e)}</div></details>`;
   }
 
@@ -703,7 +710,7 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     if (!rows.length) return '';
     const kindName = k => (k === 'discover' ? 'Discovery' : k === 'amend' ? 'Amendments' : k);
     return html`<h2>Discovery and amendments</h2><div class="scroll"><table><thead><tr>${ctx.multi ? html`<th>Blueprint</th>` : ''}<th>Work</th><th class="num">Agent time</th><th class="num">Waited for you</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
-      <tbody>${rows.map(r => html`<tr>${ctx.multi ? html`<td>${bpName(r.b)}</td>` : ''}<td>${kindName(r.kind)}</td><td class="num">${dur(r.d.agent_s)}</td><td class="num">${dur(r.d.wait_s)}</td><td class="num">${isNum(r.d.sessions) ? r.d.sessions : '—'}</td><td class="num">${tok(r.d.tokens)}</td><td class="num">${money(r.d.cost_usd)}</td></tr>`)}</tbody></table></div>`;
+      <tbody>${rows.map(r => html`<tr>${ctx.multi ? html`<td>${bpName(r.b)}</td>` : ''}<td>${kindName(r.kind)}</td><td class="num">${dur(r.d.agent_s)}</td><td class="num">${dur(r.d.wait_s)}</td><td class="num">${isNum(r.d.sessions) ? r.d.sessions : '—'}</td><td class="num">${tok(r.d.tokens)}</td><td class="num">${costOf(r.d.cost_usd, r.d.cost_estimated, r.d.sessions)}</td></tr>`)}</tbody></table></div>`;
   }
 
   function footer(st) {

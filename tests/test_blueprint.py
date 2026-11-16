@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -149,13 +150,14 @@ class Transcript:
                                        "usage": {"input_tokens": 2, "output_tokens": 100, "cache_read_input_tokens": 20000,
                                                  "cache_creation_input_tokens": 500}}})
 
-    def tool(self, at, name, inp, done_at, agent=None):
+    def tool(self, at, name, inp, done_at, agent=None, output="ok", error=False):
         tid = f"toolu_{self.sid}_{self.n}"
         self.n += 1
         self.assistant(at, [{"type": "tool_use", "id": tid, "name": name, "input": inp}])
         if done_at is None:
             return
-        result = {**self.base(done_at), "type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": "ok"}]}}
+        res = {"type": "tool_result", "tool_use_id": tid, "content": output, **({"is_error": True} if error else {})}
+        result = {**self.base(done_at), "type": "user", "message": {"role": "user", "content": [res]}}
         if agent:
             agent_id, agent_type, level = agent
             result["toolUseResult"] = {"agentId": agent_id, "agentType": agent_type, "totalDurationMs": int((done_at - at) * 1000), "status": "completed"}
@@ -1647,6 +1649,180 @@ class MetricsTest(ProjectTest):
         self.assertIn("agent 13m (model 1m 26s, tools 12m) · 1 human gate (waited 1h)", brief)
         self.assertIn("$1.42", brief)
 
+    def summary(self, sid):
+        path = self.tmp / ".specify" / "blueprint-state" / "metrics" / "sessions" / f"{sid}.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def stop_now(self, tr):
+        """The Stop event at the end of the turn just written; the session stays open."""
+        path = tr.write(live=True)
+        self.hook_event({"hook_event_name": "Stop", "session_id": tr.sid, "transcript_path": str(path)})
+        return path
+
+    def bash(self, *args):
+        return {"command": "python3 .specify/extensions/blueprint/scripts/blueprint.py " + " ".join(args)}
+
+    def test_reading_an_epic_does_not_make_the_work_its(self):
+        # A migration session reads E00's files while a feature of no epic is active: no epic gets its work.
+        chore = self.tmp / "specs" / "004-chore-migrate"
+        chore.mkdir(parents=True)
+        (chore / "spec.md").write_text("# Migrate\n")
+        self.json_cli("activate", "specs/004-chore-migrate")
+        tr = Transcript(self.tmp, "m1", start_offset=-3600)
+        tr.prompt(0, "Migrate the extension; E00 is in specs/001-e00-foundation")
+        tr.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 11)
+        tr.tool(20, "Bash", {"command": f"grep -n AC {self.f0}/tasks.md"}, 21)
+        tr.tool(30, "Edit", {"file_path": str(chore / "plan.md"), "old_string": "a", "new_string": "b"}, 31)
+        tr.say(40)
+        tr.write()
+        self.stop(tr)
+        self.assertEqual(self.json_cli("metrics", "E00")["metrics"]["sessions"], 0)
+        features = self.summary("m1")["features"]
+        self.assertEqual((list(features), features[""]["active_s"]), ([""], 40.0))
+
+    def test_a_compile_in_the_session_moves_the_work(self):
+        tr = Transcript(self.tmp, "c1", start_offset=-3600)
+        tr.prompt(0, "continue")
+        tr.tool(5, "Bash", self.bash("status", "--json"), 8)
+        tr.tool(10, "Bash", self.bash("compile", "E01"), 14, output=self.run_cli("compile", "E01").stdout)
+        tr.tool(20, "Read", {"file_path": str(self.feature() / "spec.md")}, 21)
+        tr.say(30)
+        self.stop_now(tr)
+        # the work before the compile too: a session that starts by compiling an epic is getting it ready
+        self.assertEqual(list(self.summary("c1")["features"]), ["default:E01"])
+        tr.prompt(100, "back to E00")
+        tr.tool(110, "Bash", self.bash("activate", "E00"), 112, output=self.run_cli("activate", "E00").stdout)
+        tr.tool(115, "Bash", self.bash("activate", "E09"), 116, output="error: no '## Epic E09'", error=True)
+        tr.say(130)
+        self.stop_now(tr)
+        features = self.summary("c1")["features"]
+        self.assertEqual(features["default:E01"]["active_s"], 42.0)  # the first turn stays E01's
+        self.assertEqual(features["default:E00"]["active_s"], 18.0)  # from the activate on; the failed one changes nothing
+
+    def test_a_change_the_session_does_not_show_moves_only_later_turns(self):
+        tr = Transcript(self.tmp, "o1", start_offset=-3600)
+        tr.prompt(0, "/speckit-implement")
+        tr.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 11)
+        tr.say(20)
+        self.stop_now(tr)
+        chore = self.tmp / "specs" / "004-chore"
+        chore.mkdir(parents=True)
+        self.json_cli("activate", "specs/004-chore")  # as /speckit.specify or another terminal would
+        tr.prompt(100, "now the chore")
+        tr.tool(110, "Read", {"file_path": str(chore / "spec.md")}, 111)
+        tr.say(150)
+        self.stop_now(tr)
+        features = self.summary("o1")["features"]
+        self.assertEqual((features["default:E00"]["active_s"], features[""]["active_s"]), (20.0, 50.0))
+
+    def test_an_amendment_belongs_to_its_blueprint_while_no_epic_is_active(self):
+        (self.tmp / ".specify" / "feature.json").unlink()
+        tr = Transcript(self.tmp, "a1", start_offset=-3600)
+        tr.prompt(0, "/speckit-blueprint-amend Sara wants to undo a sale")
+        tr.tool(10, "Edit", {"file_path": str(self.blueprint()), "old_string": "x", "new_string": "y"}, 12)
+        tr.tool(30, "Bash", self.bash("compile", "E01"), 34, output=self.run_cli("compile", "E01").stdout)
+        tr.say(40)
+        tr.write()
+        self.stop(tr)
+        out = self.json_cli("metrics")
+        self.assertEqual(out["discovery_and_amendments"]["default:amend"]["agent_s"], 34.0)  # up to the compile
+        self.assertEqual(out["epics"]["E01"]["metrics"]["agent_s"], 6.0)
+        # while an epic is active, an amendment is part of its work (and so is what follows while the phase reads "amend")
+        tr = Transcript(self.tmp, "a2", start_offset=-1800)
+        tr.prompt(0, "/speckit-blueprint-amend one more change")
+        tr.tool(10, "Edit", {"file_path": str(self.blueprint()), "old_string": "y", "new_string": "z"}, 12)
+        tr.say(20)
+        tr.write()
+        self.stop(tr)
+        out = self.json_cli("metrics")
+        self.assertEqual(out["discovery_and_amendments"]["default:amend"]["agent_s"], 34.0)
+        self.assertEqual(out["epics"]["E01"]["metrics"]["agent_s"], 26.0)
+
+    def test_sessions_the_hook_never_saw(self):
+        # backfill without a record of the active feature: compiles, activates, Spec Kit's report of the
+        # active feature and writes into a feature folder count; reading one does not
+        implementer = Transcript(self.tmp, "h3", start_offset=-1800)
+        implementer.prompt(0, "continue")
+        implementer.tool(10, "Bash", {"command": ".specify/scripts/bash/check-prerequisites.sh --json --require-tasks"}, 11,
+                         output=json.dumps({"FEATURE_DIR": str(self.f0), "AVAILABLE_DOCS": ["tasks.md"]}))
+        implementer.tool(20, "Edit", {"file_path": str(self.tmp / "src" / "app.ts"), "old_string": "a", "new_string": "b"}, 21)
+        implementer.say(40)
+        implementer.write()
+        reader = Transcript(self.tmp, "h1", start_offset=-7200)
+        reader.prompt(0, "what does specs/001-e00-foundation say?")
+        reader.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 11)
+        reader.say(20)
+        reader.write()
+        builder = Transcript(self.tmp, "h2", start_offset=-3600)
+        builder.prompt(0, "/speckit-implement")
+        builder.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 11)
+        builder.tool(20, "Edit", {"file_path": str(self.f0 / "tasks.md"), "old_string": "- [ ] T001 [US1] E00-S01-T1 Init the repo",
+                                  "new_string": "- [x] T001 [US1] E00-S01-T1 Init the repo"}, 21)
+        builder.say(30)
+        builder.write()
+        out = self.json_cli("metrics", "--backfill", str(reader.dir))
+        self.assertEqual((out["sessions"], out["sessions_with_blueprint_work"]), (3, 2))
+        m = self.json_cli("metrics", "E00")["metrics"]
+        self.assertEqual((m["sessions"], m["agent_s"]), (2, 70.0))
+
+    def test_an_unknown_cost_is_not_zero(self):
+        self.add_epic_02()
+        self.e00_session(cost=None)
+        self.finish("E00")
+        self.assertIsNone(self.json_cli("metrics", "E00")["metrics"]["cost_usd"])
+        self.assertIn("· cost unknown ·", self.run_cli("metrics", "E00", "--brief").stdout)
+        e01 = self.json_cli("estimate", "E01")
+        self.assertEqual((e01["agent_s"], e01["cost_usd"]), ([2430.0, 3645.0], None))
+        rest = self.json_cli("estimate")
+        self.assertIsNone(rest["remaining"]["cost_usd"])
+        for brief in (e01["brief"], rest["brief"]):
+            self.assertIn("cost unknown", brief)
+            self.assertNotIn("$", brief)
+        out = self.tmp / "dashboard.html"
+        self.run_cli("dashboard", "--export", str(out))
+        state = json.loads(out.read_text(encoding="utf-8").split("window.__STATE__ = ", 1)[1].split(";</script>", 1)[0])
+        self.assertEqual((state["totals"]["cost_usd"], state["blueprints"][0]["epics"][0]["actual"]["cost_usd"]), (None, None))
+
+    def test_a_session_that_ended_gets_its_cost(self):
+        tr = Transcript(self.tmp, "f1", start_offset=-600)
+        tr.prompt(0, "/speckit-implement")
+        tr.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 12)
+        tr.say(20)
+        self.stop_now(tr)
+        self.assertIsNone(self.summary("f1")["cost_usd"])  # Claude Code writes the cost when the session ends
+        self.json_cli("compile", "E01")  # another epic is active by the time it arrives
+        tr.cost(0.9)
+        path = tr.write(live=True)
+        later = time.time() + 30
+        os.utime(path, (later, later))
+        other = Transcript(self.tmp, "f2", start_offset=-60)
+        other.prompt(0, "/speckit-implement")
+        other.say(5)
+        self.stop_now(other)  # any later Stop event reads the ended session again
+        s = self.summary("f1")
+        self.assertEqual((s["cost_usd"], list(s["features"])), (0.9, ["default:E00"]))
+        m = self.json_cli("metrics", "E00")["metrics"]
+        self.assertAlmostEqual(m["cost_usd"], 0.9)
+        self.assertFalse(m["cost_estimated"])
+
+    def test_work_after_the_cost_record_is_priced_at_the_rate(self):
+        tr = Transcript(self.tmp, "r1", start_offset=-3600)
+        tr.prompt(0, "/speckit-implement")
+        tr.tool(10, "Read", {"file_path": str(self.f0 / "spec.md")}, 12)
+        tr.say(20)
+        tr.cost(0.5)  # the session ended here and was resumed: the record covers the work before it
+        tr.prompt(100, "go on")
+        tr.tool(110, "Read", {"file_path": str(self.f0 / "plan.md")}, 112)
+        tr.say(120)
+        tr.write()
+        self.stop(tr)
+        part = self.summary("r1")["features"]["default:E00"]
+        self.assertAlmostEqual(part["cost_usd"], 0.5)
+        self.assertGreater(part["weighted_unpriced"], 0)
+        m = self.json_cli("metrics", "E00")["metrics"]
+        self.assertEqual((round(m["cost_usd"], 4), m["cost_estimated"]), (1.0, True))
+        self.assertIn("$1.00+", self.run_cli("metrics", "E00", "--brief").stdout)
+
     def test_running_session_is_priced_at_the_learned_rate(self):
         self.e00_session()
         self.json_cli("compile", "E01")
@@ -1707,13 +1883,14 @@ class MetricsTest(ProjectTest):
         self.e00_session()
         proc = subprocess.Popen([sys.executable, str(SCRIPT), "dashboard", "--port", "0", "--no-open"], cwd=self.tmp,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
+        local = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 127.0.0.1 never goes through a proxy
         try:
             line = proc.stdout.readline()
             url = line.split("dashboard: ", 1)[1].split(" ", 1)[0]
             self.assertTrue(url.startswith("http://127.0.0.1:"))
-            state = json.loads(urllib.request.urlopen(url + "api/state", timeout=20).read())
+            state = json.loads(local.open(url + "api/state", timeout=20).read())
             self.assertEqual(state["blueprints"][0]["epics"][0]["actual"]["agent_s"], 810.0)
-            page = urllib.request.urlopen(url, timeout=20).read().decode("utf-8")
+            page = local.open(url, timeout=20).read().decode("utf-8")
             self.assertIn("<!--STATE-->", page)
         finally:
             proc.terminate()

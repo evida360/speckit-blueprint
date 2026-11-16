@@ -225,25 +225,42 @@ save one clone.
 
 Source: Claude Code transcripts (JSONL). Per assistant message they carry the timestamp, model, `effort`,
 token usage; per tool call the input and, in the result entry, the end time; subagents have their own
-transcripts under `<session>/subagents/` with a `.meta.json`; `cost-state` entries carry the session cost.
-The format is not a public API: the parser is defensive, records the Claude Code version, and is tested
-on fixtures.
+transcripts under `<session>/subagents/` with a `.meta.json`; a `cost-state` entry, written when the
+session ends, carries its cost so far. The format is not a public API: the parser is defensive, records
+the Claude Code version, and is tested on fixtures.
 
 - The `stop` event summarises the session's transcript (and its subagents) into
   `<git-common-dir>/speckit-blueprint/metrics/sessions/<session>.json`. Re-summarising the whole file is
   idempotent and takes well under a second for multi-megabyte transcripts.
-- Attribution: each interval between transcript entries belongs to the feature the session was working
-  on (paths under `specs/<folder>/`, `blueprint.py compile <epic>`, `.specify/feature.json`); intervals
-  before the first signal of a turn go to the first feature the turn names. Discovery and amendment work
-  without a feature goes to `<blueprint>:discover` / `<blueprint>:amend`.
+- Attribution: work belongs to the feature active in the session's checkout (`.specify/feature.json`) at
+  the time. A folder without `.blueprint.json`, or no active feature, is no epic: that work counts for no
+  epic. Reading an epic's files or naming it moves nothing, since a session reads other epics for
+  reference and a migration reads them all. The `stop` event records the active feature at the end of
+  every turn (`active_seen` in the summary). Within a turn, a `blueprint.py compile` or `activate` that
+  ran, or Spec Kit's own report of the active feature (`check-prerequisites` and `setup-plan` print
+  `FEATURE_DIR`; `create-new-feature` makes its new feature active and prints its `SPEC_FILE`), marks the
+  moment it changed. A change the transcript does not show moves the work from the start of the turn
+  that ended with it, so earlier turns keep their epic. Work before a session's first compile belongs to
+  the epic it compiles (it was getting it ready).
+- Discovery and amendment: while no epic is active (or before that first compile), work in a discover or
+  amend step that wrote a blueprint goes to `<blueprint>:discover` / `<blueprint>:amend`. An amendment made
+  while an epic is active counts for that epic, which the active feature decides; the step a session is in
+  is only known until the next skill it runs, so it cannot bound the amendment.
+- Sessions the `stop` event never saw (recorded before 0.5.4, or transcripts `--backfill` reads): the
+  board's last record of the session's active feature, when it has one; otherwise compiles, activates,
+  Spec Kit's reports and writes into a feature folder (tasks.md ticks, review.md).
 - Time split per turn: tool time (tool call to its result), model time (the rest of the turn), waiting
   (end of turn to the next user message, up to 4h), idle (anything longer, and gaps between sessions).
 - Stories: task ticks arrive in batches (measured: up to 19 tasks in 30 s), so durations are measured per
   tick batch and reported per story, never per task. Ticks are listed with their time.
 - Repositories: tool calls are attributed by path (repository and worktree paths) and by `cd`/`-C` in
   Bash commands.
-- Cost: the session's `cost-state` total, shared out by weighted tokens (input 1, cache write 1.25, cache
-  read 0.1, output 5). Live sessions without a total use the rate learned from finished sessions.
+- Cost: the session's last `cost-state` total, shared out by weighted tokens (input 1, cache write 1.25,
+  cache read 0.1, output 5) over the work before it. Claude Code writes it when the session ends, after
+  the last `stop` event, so each `stop` event also summarises again the sessions of the last seven days
+  that ended since their summary (up to five). Work no record covers (a session still running, or resumed
+  after its record) is priced at the rate learned from the priced work and marked "+". With no priced
+  work the cost is unknown: `null` in JSON, "cost unknown" in briefs and the dashboard, never $0.00.
 - `metrics: commit` also writes `<feature>/metrics.json` when the review is DONE.
 - `blueprint.py metrics --backfill` summarises the transcripts Claude Code still keeps for the hub and its
   worktrees.
@@ -254,7 +271,9 @@ Units are formatted in one place: `2h 5m`, `45m`, `38s`, `1d 4h`, `$3.10`, `2.4M
 ## Estimates
 
 - Size, known before building: ACs, stories, edge cases, task seeds, repositories, contracts, IDs by type.
-- Rates from finished epics: agent time, cost, tokens and calendar time per AC; human gates per story.
+- Rates from finished epics: agent time, cost, tokens and calendar time per AC; human gates per story. A
+  cost comes only from the finished epics that have one; when none has, cost ranges are `null` ("cost
+  unknown"), not zero.
 - An epic's estimate is a P50–P90 range of rate × ACs. The remaining project is a seeded Monte Carlo over
   the remaining epics; the finish date schedules them, in status's delivery order, on the `Depends on`
   graph with the parallelism observed so far. Fewer than three finished epics: the range is marked low
@@ -272,7 +291,7 @@ ranges; where each epic's time went; a per-repository view. A blueprint selector
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.3 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.5.4 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds
