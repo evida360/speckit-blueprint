@@ -28,8 +28,9 @@ market detection, design reference handling and guardrails apply unchanged; igno
 
 Run `blueprint.py status --json`. The target is the blueprint the input names (`--blueprint <id>`, or a
 product name), else the one the idea extends. An idea for a product no blueprint covers is a **new
-blueprint**: ask the user for its id (lowercase), its path (its own folder, e.g. `docs/desk/BLUEPRINT.md`),
-and the repositories that hold the existing product, if any; add the entry under `blueprints:` (and any
+blueprint**: ask the user for its id (default: the product name in lowercase), its path (default: its own
+folder, `docs/<id>/BLUEPRINT.md`), and the repositories that hold the existing product (default: none, or
+those `repositories:` already lists); add the entry under `blueprints:` (and any
 new repository under `repositories:`) in `.specify/extensions/blueprint/blueprint-config.yml`. Never add
 one product's epics to another product's blueprint.
 
@@ -58,6 +59,9 @@ skill's, and the round to do.
 
 1. **Intake (subagent).** Phase 0 of the skill: the warm-up searches and ONE batch of questions with a
    default each (closed questions marked as such), saved to `discovery/intake.md`; it returns the batch.
+   Each default names its source: in incremental or brownfield mode `[BLUEPRINT — …]` or
+   `[VERIFIED — repo:<repository>/<path>]` (a question either already answers is not asked); in a new
+   product a source `S-nn` or `[ASSUMED — why]`. The brief's assumptions keep those tags.
    **You:** ask the user (AskUserQuestion for the closed ones, prose for the rest) and send their answers,
    verbatim, back.
 2. **Research and brief (same subagent).** It records the answers (unanswered → the defaults, as

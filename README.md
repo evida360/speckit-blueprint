@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.5.8, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.6.0, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -57,14 +57,15 @@ Requires Python 3.9+, Spec Kit 1.2+ and git.
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v1.2.4
 specify init my-product --integration claude
 cd my-product
-specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.5.8.zip
+specify extension add blueprint --from https://github.com/mohsensamiei/speckit-blueprint/archive/refs/tags/v0.6.0.zip
 ```
 
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
 clone with `specify extension add --dev /path/to/speckit-blueprint`.
 
-Installing registers seven commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
-around `/speckit-implement`, and three Claude Code hooks in `.claude/settings.json` (session start, tool
+Installing registers eight commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
+around `/speckit-implement`, six answers hooks before Spec Kit's questioning commands (specify, clarify,
+plan, tasks, analyze, checklist), and three Claude Code hooks in `.claude/settings.json` (session start, tool
 use, stop) behind one internal handler.
 
 ## How you use it
@@ -79,12 +80,20 @@ You mostly talk in plain language; the `speckit-blueprint-flow` skill reads the 
                                   /speckit-tasks → /speckit-analyze
 "continue"  (fresh session)     → /speckit-implement
                                      before: /speckit-blueprint-context  spec.md, rules, preconditions
-                                     after:  /speckit-blueprint-review   independent review, review.md handoff
+                                     after:  /speckit-blueprint-review   review passes at max that fix nothing,
+                                                                         fixes here, until a pass is clean
 "clients should also get SMS"   → /speckit-blueprint-amend       edit the blueprint in place, recompile affected epics
 "build E04 next to E03"         → blueprint.py workspace E04 --create
 "I'm on a new machine"          → blueprint.py workspace setup, then workspace E03 --create
 "where are we?"                 → a table per blueprint; or blueprint.py dashboard
 ```
+
+Every question asked along the way, by this extension or by Spec Kit's own commands (clarify's
+Recommended option, specify's Suggested Answers, analyze's recommendations, checklist's defaults), proposes
+the answer the blueprint already decided, tagged with where (`[BLUEPRINT — §12.4 ENT-Order]`). Only when
+nothing decides it does it say `[NOT IN BLUEPRINT — searched: …]` and mark the suggestion as its own. A
+Stop hook sends back once a recommendation that names no source; `blueprint.py search <words>` finds the
+line to cite.
 
 Every new session starts with a short status block, so "continue" is enough. You still approve the
 decision brief, product-changing amendments, migrations, and every commit and push.
@@ -105,7 +114,8 @@ never next, compile refuses it, and it counts in no progress, estimate or foreca
 | `speckit-blueprint-amend` | Deliberate change to a blueprint, at a guaranteed effort |
 | `speckit-blueprint-compile` | One epic → feature folder |
 | `speckit-blueprint-context` | `before_implement` hook |
-| `speckit-blueprint-review` | `after_implement` hook: an independent review at a guaranteed effort |
+| `speckit-blueprint-review` | `after_implement` hook: the review loop (full passes at a guaranteed effort that fix nothing; fixes at the session's level) |
+| `speckit-blueprint-answers` | `before_specify/clarify/plan/tasks/analyze/checklist` hooks: proposed answers come from the blueprint, tagged |
 | `speckit-blueprint-hook` | Internal: Claude Code events |
 
 ## One model for one to many repositories
@@ -208,8 +218,15 @@ effort_model: inherit
 A listed step runs its reasoning in a subagent started at that level, whatever the session's level is.
 Subagents cannot talk to the user, so discover and amend run in rounds: the subagent works up to a
 checkpoint (intake questions, the decision brief, a drafted amendment) and returns; the main session asks
-you; your answer goes back to the same subagent. The review runs in a fresh subagent that did not write
-the code. A Claude Code hook checks the agent's real level: if something lowers it (`CLAUDE_CODE_EFFORT_LEVEL`,
+you; your answer goes back to the same subagent.
+
+The review is a loop. Each pass runs in a NEW subagent at `effort.review` that did not write the code and
+fixes nothing: it goes through every story, AC, checklist item and Definition of Done line to the end and
+lists every defect in `review.md`. The session then fixes them all at its own level (whatever you chose;
+only the review is pinned), and a fresh pass reviews everything again, until a pass finds nothing
+(`review_passes`, default 5, caps one run). A hook keeps a reviewer from writing anything but its pass and
+from running a second pass, and status counts an epic done only when its last pass covered everything and
+found nothing. A Claude Code hook checks the agent's real level: if something lowers it (`CLAUDE_CODE_EFFORT_LEVEL`,
 an organization cap, the model), the step stops and says why, and the guard refuses to write a blueprint
 or a DONE review below the level.
 
@@ -339,7 +356,9 @@ blueprint.py status [--json|--brief]        # state per epic and the next step
 blueprint.py compile E03 [--force] [--take] # feature folder for one epic
 blueprint.py bootstrap [--skip-lint]        # constitution rules, checklist, decisions log, CLAUDE.md block
 blueprint.py activate E03                   # make a compiled epic the active feature
-blueprint.py context | review-facts         # facts for the implement hooks
+blueprint.py context | review-facts         # facts for the implement hooks (review-facts: the review loop)
+blueprint.py answers --step clarify         # where a question's default comes from (the answers hooks)
+blueprint.py search integer rials           # blueprint lines with every word, and the section/ID to cite
 blueprint.py section 14.4 | find ENT-Order  # read part of a blueprint
 blueprint.py lint | refs | stale | epics    # structure, references, staleness
 blueprint.py accept E01 --note "…"          # a built epic stays as built after a blueprint change
@@ -355,9 +374,18 @@ blueprint.py --help | <command> --help      # every command, or one command's us
 # with several blueprints: --blueprint <id> on any command, or desk:E03 / DESK:DR-03
 ```
 
+## Upgrading from 0.5
+
+1. Add the extension again (`specify extension add … v0.6.0`) so Spec Kit registers the answers command
+   and its six hooks.
+2. Status reports the constitution outdated once (two fixed principles changed): run
+   `blueprint.py bootstrap --blueprint <id>`, which also updates the `CLAUDE.md` block.
+3. Folders compiled before 0.6 keep the 0.5 rule for DONE (every AC has evidence); folders compiled from
+   0.6 on also need a complete review pass that found nothing.
+
 ## Upgrading from 0.4
 
-1. Update the extension (`specify extension add … v0.5.8`).
+1. Update the extension (`specify extension add … v0.6.0`).
 2. Run `blueprint.py migrate`: a dry run listing what it will change (config `schema: 2`, a
    `repositories:` map from the names your blueprints and tasks use, each epic's repository fields as a
    table with the old prose kept as notes, ids on traces and managed blocks) and anything it could not

@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: blueprint
   name: "Blueprint"
-  version: "0.5.8"
+  version: "0.6.0"
   description: "Evidence-backed product discovery into blueprints, compiled into Spec Kit features one epic at a time, across one or many repositories (Claude Code)"
   author: "Mohsen Samiei"
   repository: "https://github.com/mohsensamiei/speckit-blueprint"
@@ -38,7 +38,10 @@ provides:
       description: "Before implement (hook): load a blueprint feature's spec and rules, check its preconditions"
     - name: speckit.blueprint.review
       file: commands/review.md
-      description: "After implement (hook): independent review against the ACs and checklist, then the handoff"
+      description: "After implement (hook): the review loop (full passes at max that fix nothing, fixes here, until clean), then the handoff"
+    - name: speckit.blueprint.answers
+      file: commands/answers.md
+      description: "Before Spec Kit's questioning commands (hook): proposed answers come from the blueprint, tagged with their source"
     - name: speckit.blueprint.hook
       file: commands/hook.md
       description: "Internal: handler for Claude Code events (session start, tool use, stop)"
@@ -50,6 +53,30 @@ provides:
       required: false
 
 hooks:
+  before_specify:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint projects: questions take their defaults from the blueprint; an epic is compiled, not specified"
+  before_clarify:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint features: recommended answers come from the blueprint, tagged; answers become amendments or decision records"
+  before_plan:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint features: the plan is compiled; unknowns take their defaults from the blueprint"
+  before_tasks:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint features: the scope is the whole epic; choices come from the plan and the blueprint"
+  before_analyze:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint features: recommendations cite the blueprint and route spec defects to an amendment"
+  before_checklist:
+    command: speckit.blueprint.answers
+    optional: false
+    description: "Blueprint features: checklist questions and items take their defaults and IDs from the blueprint"
   before_implement:
     command: speckit.blueprint.context
     optional: false
@@ -57,7 +84,7 @@ hooks:
   after_implement:
     command: speckit.blueprint.review
     optional: false
-    description: "For blueprint features only: independent review against the ACs and checklist, then review.md"
+    description: "For blueprint features only: review passes at max that fix nothing, fixes in this session, until a pass is clean; then review.md"
 
 events:
   session_start:

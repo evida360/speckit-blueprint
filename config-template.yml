@@ -56,8 +56,8 @@ guard: true
 
 # Steps that must run at a guaranteed reasoning level (low | medium | high | xhigh | max). They run their
 # reasoning in a subagent started at that level, whatever the session's level; a hook checks the real
-# level. Every other step (compile, tasks, implement, …) runs at the session's level. `session` takes a
-# step off the list.
+# level. Every other step (compile, tasks, implement, the fixes between review passes, …) runs at the
+# session's level. `session` takes a step off the list.
 effort:
   discover: max
   amend: max
@@ -65,6 +65,11 @@ effort:
 
 # Model for those subagents: inherit (the session's), or an alias such as opus or sonnet.
 effort_model: inherit
+
+# The review loop: each pass is a full review in a fresh subagent at `effort.review` that fixes nothing;
+# the session fixes what it found, and a new pass reviews everything again, until one finds nothing. One
+# review run stops after this many passes and asks the user (1 to 20).
+# review_passes: 5
 
 # Metrics from Claude Code transcripts (time, tokens, cost, model, effort per epic and story):
 # local: kept in the hub's .git, never committed; commit: also a summary per finished epic in its feature

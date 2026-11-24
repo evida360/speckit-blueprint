@@ -74,15 +74,20 @@ instead of the per-session runbook:
 
 - **Per epic:** `/speckit-blueprint-compile Enn` → `/speckit-tasks` → `/speckit-analyze` →
   `/speckit-implement` (hook loads spec.md, re-checks preconditions and `[VERIFY-AT-BUILD]` items) →
-  `/speckit-blueprint-review` (hook: gate, AC evidence, review checklist, Definition of Done, handoff in
-  `review.md`). A fresh session per epic implementation; `/speckit-implement` resumes from the first
+  `/speckit-blueprint-review` (hook: the review loop. Each pass is a full review at a guaranteed effort,
+  by a fresh reviewer that fixes nothing and lists every defect: gate, AC evidence, review checklist,
+  Definition of Done. The session fixes them all, and a fresh pass reviews everything again, until a pass
+  finds nothing; then the handoff in `review.md`). A fresh session per epic implementation; `/speckit-implement` resumes from the first
   unchecked task after a crash or a deliberate session break.
 - **State lives in files:** `tasks.md` checkboxes (progress), `review.md` (evidence and handoff),
   the blueprint's decisions log (`docs/DECISIONS.md` by default; with an index), its Amendments log (changes to the plan).
   There is no PROGRESS.md; `blueprint.py status` derives progress from the feature folders.
 - **Parallel epics:** one worktree per epic (`blueprint.py workspace Enn --create`); an epic starts when the
   epics it depends on are done and merged.
-- **Gates** (an epic is done only when all are true): every AC has evidence, `check` and CI green, epic-level and regression tests green, review checklist
+- **Questions while building** take their default from this blueprint, the compiled feature folder or
+  the decisions log, tagged `[BLUEPRINT — §n or ID]`; where none decides, `[NOT IN BLUEPRINT — …]`, and the
+  answer becomes an amendment or a `DR-E03-n`.
+- **Gates** (an epic is done only when all are true): a full review pass found no defect, every AC has evidence, `check` and CI green, epic-level and regression tests green, review checklist
   applied with results, no gate weakened without a DR, no unexplained TODO or skipped test, no new flaky
   test, decisions and amendments recorded.
 - **Amendments log** (keep it here; the linter looks for it):
@@ -119,6 +124,7 @@ Keep the template's numbering, because the extension config refers to it:
   policy, §14.2 the gate, §14.3 test strategy, §14.8 definitions of green and done.
 - Every epic's plan.md (default): §12.2 module map, §13.1 stack table, §13.3 repository layout, §13.4 `check`.
 - data-model.md uses the opening conventions paragraph of §12.4; contracts/api.md the opening of §12.5.
-- `docs/REVIEW-CHECKLIST.md` is §14.4 verbatim.
+- `docs/REVIEW-CHECKLIST.md` is §14.4 verbatim. In §14.4 leave out upstream's "Stop at the first
+  unanswered item and fix it; do not batch": the review lists every defect in one pass, then fixes.
 
 These sections are read in every epic, so keep them tight: rules and numbers, not narrative.

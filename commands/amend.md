@@ -29,10 +29,11 @@ user's words verbatim, the blueprint id and path, the active feature and its bra
    with `blueprint.py find <ID>` / `section <n>` (never the whole file); decides whether it changes
    user-visible behaviour, money, data retention or security; and drafts every edit exactly (location, old
    text, new text), the amendment ID (`A-E03-1` when the change is made on an epic's branch, `A-nn` on the
-   integration branch; conventions §2) and the decision records it supersedes or adds. It returns the
-   draft without editing anything.
+   integration branch; conventions §2) and the decision records it supersedes or adds. The draft quotes
+   the blueprint text it changes with its section or ID. It returns the draft without editing anything.
    **You:** if the change alters behaviour, money, data retention or security and the user's message did
-   not already decide it, show the draft and ask; send the reply verbatim. Technical amendments go ahead.
+   not already decide it, show the draft and ask, with the recommended answer tagged (conventions §8);
+   send the reply verbatim. Technical amendments go ahead.
 2. **Apply and lint (same subagent).** It edits the blueprint in place, marks each change
    `(amended A-…)` (never a "version 2" section), adds the Amendments log row
    (`| A-… | date | epic/story | what changed | why | approved by |`), marks a superseded DR and adds the
@@ -46,7 +47,8 @@ user's words verbatim, the blueprint id and path, the active feature and its bra
    - partly or fully built: never recompile over finished work silently. Tell the user what changed under
      built code and offer: recompile with `--force` and regenerate tasks (implement then reworks only what
      changed), a follow-up story in a later epic, or keeping the epic as built
-     (`blueprint.py accept <epic> --note "<why>"`). The user decides.
+     (`blueprint.py accept <epic> --note "<why>"`). The user decides; say what the blueprint says of each
+     option (its §16 next epics, the decision's reversibility) and tag the recommended one.
    - A retired epic is never recompiled (compile refuses it, `stale` leaves it out). When status shows a
      `feature_directory` for it, it was compiled before: tell the user what was built for it
      (`tasks_done`) and let them decide what happens to that work.

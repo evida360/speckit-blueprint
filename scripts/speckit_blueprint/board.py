@@ -29,7 +29,7 @@ def now_iso() -> str:
 
 
 def _empty() -> dict:
-    return {"epics": {}, "sessions": {}, "gates": {}}
+    return {"epics": {}, "sessions": {}, "gates": {}, "reviewers": {}}
 
 
 def load(root: Path) -> dict:
@@ -176,3 +176,26 @@ def record_gate(root: Path, key: str, repo: str, result: dict) -> None:
         board["gates"].setdefault(key, {})[repo] = {k: result[k] for k in ("ok", "exit", "at", "duration_s", "command")}
 
     update(root, fn)
+
+
+def register_reviewer(root: Path, agent_id: str, entry: dict) -> dict | None:
+    """Record the subagent that runs a review pass; returns the earlier entry for the same agent, if any.
+    Entries older than two days are dropped."""
+    earlier: dict = {}
+
+    def change(board: dict) -> None:
+        cutoff = time.time() - 2 * 86400
+        rv = {k: v for k, v in board.get("reviewers", {}).items() if v.get("at", 0) >= cutoff}
+        if agent_id in rv:
+            earlier.update(rv[agent_id])
+        rv[agent_id] = {**entry, "at": time.time()} if not earlier else rv[agent_id]
+        board["reviewers"] = rv
+
+    update(root, change)
+    return earlier or None
+
+
+def reviewer(root: Path, agent_id: str | None) -> dict | None:
+    if not agent_id:
+        return None
+    return load(root).get("reviewers", {}).get(agent_id)

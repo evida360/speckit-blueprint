@@ -24,7 +24,7 @@ input: take `next.epic` from `blueprint.py status --json`.
    `data-model.md` and `contracts/` when the epic touches them, and the `.blueprint.json` trace; claims the
    epic on the board for this worktree; and makes the folder the active feature. Its JSON names the
    folder, the hub branch and, per repository, the base and branch.
-2. Refusals:
+2. Refusals (when you ask the user, the default is the refusal's own reason, conventions §8):
    - completed tasks in the folder: the epic is partly built and a product change belongs in
      `/speckit-blueprint-amend`. Never add `--force` on your own.
    - another worktree builds the epic: continue it there. `--take` moves it here only when the user says

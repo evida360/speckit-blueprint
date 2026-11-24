@@ -7,7 +7,8 @@ this project's own workflow and rules.
   building epics in parallel, use the `speckit-blueprint-flow` skill. It reads the project state and runs
   the next step.
 - Flow per epic: `/speckit-blueprint-compile {{EPIC}}` → `/speckit-tasks` → `/speckit-analyze` →
-  `/speckit-implement` (its hooks load the spec and run `/speckit-blueprint-review`).
+  `/speckit-implement` (its hooks load the spec and run `/speckit-blueprint-review`: review passes at a
+  guaranteed effort that fix nothing, the fixes in this session, until a pass finds nothing).
 - In those feature folders every file other than `tasks.md` and `review.md` is compiled, and so is the
   blueprint part of `.specify/memory/constitution.md`. Never edit them by hand: product or AC changes go
   through `/speckit-blueprint-amend`.
@@ -17,6 +18,11 @@ this project's own workflow and rules.
   `blueprint.py workspace <epic> --create` sets one up.
 - Decisions taken while building: `DR-<epic>-<n>` in `{{DECISIONS}}` (index row too); `blueprint.py context`
   gives the next ID.
+- Every question about this product, in any command (Spec Kit's clarify, specify, analyze, checklist and
+  plan included): its default comes from the feature folder, `{{DECISIONS}}` or `{{BLUEPRINT}}`
+  (`blueprint.py search <words>{{FLAG}}`, `find <ID>{{FLAG}}`), tagged `[BLUEPRINT — <section or ID>]`; where
+  none decides it, `[NOT IN BLUEPRINT — searched: …]` and any suggestion is marked as yours. Accepted
+  answers become amendments or `DR-<epic>-<n>`.
 - Start a fresh session for each epic's implementation.
 - Where the rest of this file (and anything it imports) or the constitution's own principles set a
   stricter rule, that rule wins.

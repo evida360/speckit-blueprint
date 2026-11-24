@@ -21,19 +21,25 @@ $ARGUMENTS
 2. Run its `rules_command`: the rules that govern this feature (other blueprints' blocks do not apply).
 3. Read the file at `spec` in full, once.
 4. If `problems` is not empty (dependencies not done here, the blueprint changed since compile, a
-   repository missing or on the wrong branch), stop and report them; the user decides.
+   repository missing or on the wrong branch), stop and report them, each with the default its facts give
+   (conventions §8); the user decides.
 5. Re-check every `[VERIFY-AT-BUILD]` item in `preconditions_and_verify_at_build` that this epic depends
    on (a search or a sandbox request), and record `✔ date` or `✘ date + what changed` under a
    `## VERIFY-AT-BUILD` heading at the top of the feature's `review.md` (create it with
-   `Status: IN PROGRESS` as its first line). A `✘`: stop and report.
+   `Status: IN PROGRESS` as its first line). A `✘`: stop and report, recommending the blueprint's own
+   fallback for it (`blueprint.py find INT-…` / `R-…`) with its tag.
 6. Hold these rules for the whole implementation (the constitution has the rest):
    - Tick each task `[X]` in tasks.md as soon as it is done and its gate is green, one at a time. The ticks
      are the resume point, and the progress and story timings in status, metrics and the dashboard.
    - Each task works in its repository (`repositories[].path` in the context facts) and gives paths
      relative to it. After a task, run that repository's gate (`blueprint.py gate <epic> --repo <name>`
      when the config has one); keep it green and never weaken it.
-   - A decision the spec does not cover: the next ID is `next_decision_id`; add its record and index row
-     to `decisions_log` in the same commit. An AC that is wrong or impossible: stop and use
+   - A question while building: look it up first (conventions §8); only a decision nothing in the
+     feature folder, the decisions log or the blueprint covers gets a record. Its ID is
+     `next_decision_id`, its Context keeps `[NOT IN BLUEPRINT — searched: …]`; add its record and index
+     row to `decisions_log` in the same commit.
+   - Implement's "some checklists are incomplete, proceed?" is recommended from the unchecked items'
+     blueprint IDs: proceed only when none of them is an AC, an edge case or a Definition of Done line. An AC that is wrong or impossible: stop and use
      `/speckit-blueprint-amend`.
    - Read source files over 200 lines by range (`grep -n` first); do not re-read unchanged files. Anything
      outside the feature folder: `blueprint.py section` / `find`, not the blueprint.

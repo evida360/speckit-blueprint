@@ -50,6 +50,12 @@ does not depend on the session's level. A step not listed runs here, at the sess
    verbatim to the same subagent (SendMessage resumes it with its context and its effort). If it cannot be
    resumed (a new session), start a new one at the same level that reads the checkpoint files.
 5. Relay faithfully: never shorten, reword or decide anything on the user's behalf in between.
+6. A review pass is not a round: every pass starts a NEW subagent (never SendMessage to an earlier
+   reviewer), so each pass reviews everything from scratch. Its first command is `blueprint.py
+   require-effort review --pass <n>`; the hook then refuses that subagent any write but its feature's
+   `review.md`, any command that changes the work, and a second pass number.
+7. The review's fixes are not a guaranteed step: the session that runs the review makes them at its own
+   level. Start no subagent with an `effort` for them, and do not ask the user to change their level.
 
 The guard refuses to write a blueprint, its discovery checkpoints or `Status: DONE` in a review below the
 configured level, so work done at a lower level cannot slip in.
@@ -91,9 +97,39 @@ output). Fix each warning or justify it in one line. Repeat until it exits 0.
 
 ## 7. Always
 
+- Every question carries the default the blueprint decides, tagged with where it says so (§8).
+
 - The project's own rules come first: the constitution's principles outside the managed blocks,
   `CLAUDE.md` and what it imports, `AGENTS.md`. Where they are stricter, follow them.
 - Never edit compiled files (`spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`,
   `contracts/`, the managed blocks); change the blueprint through `/speckit-blueprint-amend`.
 - Never commit or push unless the user asks; follow their git rules and each repository's.
 - Everything written into the repositories is in English; talk to the user in their language.
+
+## 8. Questions and their defaults
+
+1. Every question at any step carries the default the blueprint already decides, never a guess of your
+   own. This covers this extension's commands and their subagents' checkpoints, and Spec Kit's own
+   questions: clarify's Recommended/Suggested answer, specify's `[NEEDS CLARIFICATION]` options, analyze's
+   recommendations and its remediation offer, checklist's questions, a plan unknown, the tasks scope, and
+   implement's "proceed?".
+2. Look first, cheapest first: the feature folder (`spec.md`: ACs, edge cases, copy, success criteria and
+   the open questions with their defaults under Assumptions; `plan.md`, `research.md`, `data-model.md`,
+   `contracts/`), then the decisions log, then `blueprint.py search <words>`, `find <ID>` and
+   `section <n>`. `blueprint.py answers --step <step>` lists all of these for the active feature.
+3. Tag the default with its source, in English whatever language you talk in:
+   `[BLUEPRINT — §12.4 ENT-Order]`, `[BLUEPRINT — DR-07]`, `[BLUEPRINT — OQ-03 default]`,
+   `[BLUEPRINT — E03-S02 AC-4]`, `[BLUEPRINT — DR-E03-2]`. The project's own rules are cited by file.
+4. Only when none of them decides it: `[NOT IN BLUEPRINT — searched: <what you looked for, where>]`, then
+   ask with no default, or mark the suggestion clearly as your own.
+5. A question the blueprint already answers is not asked: state the answer with its tag. Revisiting a
+   decided answer is an amendment.
+6. Flow questions (the next epic, a refusal, a worktree) default to what the script decided, named as
+   such; the epic order itself is the blueprint's.
+7. An accepted answer goes where the next session finds it: a product answer (behaviour, AC, copy, data,
+   scope) is an amendment (`/speckit-blueprint-amend`); a technical one is a `DR-E03-n` whose Context keeps
+   the tag. Never an edit to a compiled file.
+8. Relay a subagent's questions with their tags.
+
+In a blueprint feature, the Stop hook sends back once a reply whose `**Recommended:**`, `**Suggested:**`
+or `**Suggested Answers**` names no source.

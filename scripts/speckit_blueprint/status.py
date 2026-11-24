@@ -52,7 +52,9 @@ def review_check(review: Path, acs: dict) -> tuple[str | None, list[str]]:
     status = review_status(review)
     if status != "DONE" or not acs:
         return status, []
-    text = review.read_text(encoding="utf-8")
+    from .review import split_passes
+
+    text = split_passes(review.read_text(encoding="utf-8"))[0]  # a findings table is never evidence
     marks = [(m.start(), m.group(0).split(":")[-1]) for m in STORY_ID_RE.finditer(text)]
     segments: dict = {}
     for k, (pos, sid) in enumerate(marks):
@@ -77,6 +79,13 @@ def before_0_5(d: Path, trace: dict) -> bool:
 
 def epic_acs(epic: dict) -> dict:
     return {st["id"]: st["acs"] for st in epic["stories"] if st["acs"]}
+
+
+def review_loop(root: Path, cfg: dict, d: Path, trace: dict, acs: dict) -> dict:
+    """The review loop's state for a folder compiled with it (0.6 on)."""
+    from .review import checklist_items, loop_state
+
+    return loop_state(d / "review.md", acs, checklist_items(root / cfg["review_checklist_path"]), len(trace.get("dod") or []))
 
 
 def epic_row(root: Path, cfg: dict, bp: Blueprint, e: dict) -> dict:
@@ -104,10 +113,19 @@ def epic_row(root: Path, cfg: dict, bp: Blueprint, e: dict) -> dict:
     rv, missing = review_check(d / "review.md", trace.get("acs") or epic_acs(e))
     changed = stale_units(bp, trace)
     row.update(tasks_total=total, tasks_done=done, review=rv)
+    loop = None
     if rv == "DONE" and before_0_5(d, trace):
         row["review_before_0_5"] = True
         missing = []
-    if rv == "DONE" and not missing:
+    elif trace.get("review_loop") and total and done == total:
+        loop = review_loop(root, cfg, d, trace, trace.get("acs") or epic_acs(e))
+        row["review_passes"] = loop["passes"]
+        if loop["open"]:
+            row["review_open"] = loop["open"][:30]
+        if loop["passes"] and loop["incomplete"]:
+            row["review_incomplete"] = loop["incomplete"]
+        row["review_next"] = loop["next"]
+    if rv == "DONE" and not missing and (loop is None or loop["next"] == "done" or not trace.get("review_loop")):
         row["state"] = "done"
     elif total and done == total:
         row["state"] = "implemented"
@@ -162,7 +180,13 @@ def dependency_done(root: Path, cfg: dict, dep: str, rows: dict) -> bool:
         return False
     trace = read_trace(d) or {}
     rv, missing = review_check(d / "review.md", trace.get("acs") or {})
-    return rv == "DONE" and (not missing or before_0_5(d, trace))
+    if rv != "DONE":
+        return False
+    if before_0_5(d, trace):
+        return True
+    if missing:
+        return False
+    return not trace.get("review_loop") or review_loop(root, ocfg, d, trace, trace.get("acs") or {})["next"] == "done"
 
 
 def retired_dependency(root: Path, cfg: dict, dep: str, rows: dict, cache: dict) -> bool:
@@ -376,8 +400,19 @@ def project_status(root: Path, cfg: dict, board: dict | None = None, write_board
                 new_session=(s == "tasked"),
             )
         elif s == "implemented":
-            why = ("All tasks are checked; run the review." if not row.get("review_missing") else
-                   f"review.md says DONE but has no evidence for {', '.join(row['review_missing'][:5])}; finish the review.")
+            passes = row.get("review_passes") or 0
+            if row.get("review_missing"):
+                why = f"review.md says DONE but has no evidence for {', '.join(row['review_missing'][:5])}; finish the review."
+            elif row.get("review_open"):
+                why = (f"Review pass {passes} has open findings ({', '.join(row['review_open'][:5])}); fix them in this "
+                       "session, then a fresh pass reviews everything again.")
+            elif passes and row.get("review_incomplete"):
+                why = (f"Review pass {passes} did not cover {', '.join(row['review_incomplete'][:5])}; run review pass "
+                       f"{passes + 1}, a fresh full review.")
+            elif passes and row.get("review_next") == "review":
+                why = f"Review pass {passes}'s findings are fixed; run review pass {passes + 1}, a fresh full review."
+            else:
+                why = "All tasks are checked; run the review."
             st["next"] = nxt("speckit-blueprint-review", why, row["epic"])
         if row.get("feature_directory") and row["feature_directory"] != st["active_feature"] and st["next"]["command"] != "speckit-blueprint-compile":
             st["next"]["activate"] = row["feature_directory"]
@@ -456,6 +491,9 @@ def brief(st: dict) -> str:
         n = st.get("next") or {}
         if n:
             hint = f" Runs at effort {n['effort']} in a subagent." if n.get("effort") else ""
+            if n.get("command") == "speckit-blueprint-review" and n.get("effort"):
+                hint = (f" Each review pass runs at effort {n['effort']} in a fresh subagent and fixes nothing; "
+                        "this session fixes what it finds.")
             lines.append(f"Next: {next_label(n, st, multi)} — {n['why']}{hint}")
         if n.get("missing_repositories"):
             names = ", ".join(f"{m['name']} ({m['path']})" for m in n["missing_repositories"])
@@ -474,5 +512,7 @@ def brief(st: dict) -> str:
             lines.append(f"Also: {o.get('product')} ({o['blueprint_id']}) — {o['epics_done']}/{o['epics_total']} epics done; next {next_label(n, o, True) if n else '—'}.")
     if multi:
         lines.append("Several blueprints: name one with `<id>:E01` or `--blueprint <id>`; the default is the active feature's.")
-    lines.append("Workflow rules: use the speckit-blueprint-flow skill; never hand-edit compiled spec files.")
+    lines.append("Workflow rules: use the speckit-blueprint-flow skill; never hand-edit compiled spec files; a "
+                 "question's default comes from the blueprint, tagged [BLUEPRINT — <section or ID>], or says "
+                 "[NOT IN BLUEPRINT — searched: …].")
     return "\n".join(lines)

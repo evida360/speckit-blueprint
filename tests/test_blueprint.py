@@ -5,6 +5,7 @@ Run from the repository root:  python3 -m unittest discover -s tests -v
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -123,11 +124,18 @@ SCHEMA_1_REPOS = (
     "contracts: provides API-01. `app`: base `main`, branch `feat/sales-ui`, contracts: none.\n"
 )
 
+def clean_pass(n: int = 1, stories=None) -> str:
+    """A review pass that covers everything and found nothing (0.6 traces need one for DONE)."""
+    stories = stories or [f"E{e:02d}-S{s:02d}" for e in range(0, 6) for s in range(1, 4)]
+    cov = "\n".join(f"{sid} AC-1 to AC-9 ✔ · CL-1 to CL-40 ✔" for sid in stories)
+    return f"\n## Review passes\n\n### Pass {n} — 2026-11-24 — effort max\nCoverage:\n{cov}\nDoD-1 to DoD-9 ✔\nFindings: none\n"
+
+
 DONE_REVIEW = {
-    "E00": "Status: DONE\n# Handoff — E00\nAC evidence: E00-S01 AC-1 src/smoke.test.ts::passes\n",
+    "E00": "Status: DONE\n# Handoff — E00\nAC evidence: E00-S01 AC-1 src/smoke.test.ts::passes\n" + clean_pass(),
     "E01": "Status: DONE\n# Handoff — E01\nAC evidence: E01-S01 AC-1 test/sale.int.test.ts::stores · AC-2 test/sale.int.test.ts::rejects\n"
-           "E01-S02 AC-1 src/undo.test.ts::deletes\n",
-    "E02": "Status: DONE\n# Handoff — E02\nAC evidence: E02-S01 AC-1 src/total.test.ts::sums\n",
+           "E01-S02 AC-1 src/undo.test.ts::deletes\n" + clean_pass(),
+    "E02": "Status: DONE\n# Handoff — E02\nAC evidence: E02-S01 AC-1 src/total.test.ts::sums\n" + clean_pass(),
 }
 
 
@@ -414,7 +422,7 @@ class StatusTest(ProjectTest):
         self.json_cli("compile", "E01")
         (self.feature() / "tasks.md").write_text("- [x] T001 a\n")
         review = self.feature() / "review.md"
-        review.write_text("Status: DONE\nAC evidence:\n- E01-S01\n  - AC-1 sale.int::stores\n  - AC-2 sale.int::rejects\n- E01-S02\n  - AC-1 undo::deletes\n")
+        review.write_text("Status: DONE\nAC evidence:\n- E01-S01\n  - AC-1 sale.int::stores\n  - AC-2 sale.int::rejects\n- E01-S02\n  - AC-1 undo::deletes\n" + clean_pass())
         self.assertEqual(next(e for e in self.state()["epics"] if e["epic"] == "E01")["state"], "done")
         review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 sale.int::stores\nE01-S02 AC-1 undo::deletes\n")
         e01 = next(e for e in self.state()["epics"] if e["epic"] == "E01")
@@ -425,7 +433,7 @@ class StatusTest(ProjectTest):
         self.json_cli("compile", "E01")
         (self.feature() / "tasks.md").write_text("- [x] T001 a\n")
         review = self.feature() / "review.md"
-        review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 to 2 sale.int\nE01-S02 AC-1 undo::deletes\n")
+        review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 to 2 sale.int\nE01-S02 AC-1 undo::deletes\n" + clean_pass())
         self.assertEqual(next(e for e in self.state()["epics"] if e["epic"] == "E01")["state"], "done")
         # a range counts in its own story's evidence only
         review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 sale.int::stores\nE01-S02 AC-1/2 undo::deletes\n")
@@ -2225,3 +2233,238 @@ class UnitsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnswersTest(ProjectTest):
+    """0.6: the defaults of every question come from the blueprint."""
+
+    def test_answers_point_at_the_blueprint(self):
+        self.assertFalse(self.json_cli("answers", "--step", "clarify")["applies"])  # no feature, not specify
+        out = self.json_cli("answers", "--step", "specify")
+        self.assertEqual((out["applies"], out["scope"]), (True, "project"))
+        self.assertIn("E01", [e["id"] for e in out["blueprints"][0]["epics"]])
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E01")
+        out = self.json_cli("answers", "--step", "clarify")
+        self.assertEqual((out["scope"], out["epic"]), ("feature", "E01"))
+        self.assertEqual(out["open_questions"], [{"id": "OQ-01", "question": "Tax on sales?", "default": "Ignore in v1"}])
+        self.assertEqual(out["next_decision_id"], "DR-E01-1")
+        self.assertTrue(any("search" in w["where"] for w in out["look_in"]))
+        self.assertIn("[BLUEPRINT —", out["tags"].values())
+        self.assertEqual(self.json_cli("answers", "--step", "specify")["scope"], "project")
+        # the project's own feature
+        (self.tmp / "specs" / "009-own").mkdir(parents=True)
+        self.run_cli("activate", "specs/009-own")
+        self.assertFalse(self.json_cli("answers", "--step", "analyze")["applies"])
+        self.assertTrue(self.json_cli("answers", "--step", "plan")["applies"])
+        self.blueprint().unlink()
+        self.assertFalse(self.json_cli("answers", "--step", "plan")["applies"])
+
+    def test_search_cites_section_and_id(self):
+        def cites(*words):
+            return [h["cite"] for h in self.json_cli("search", *words)["hits"]]
+
+        self.assertIn("§4 DR-01", cites("integer", "rials"))
+        self.assertEqual(cites("undo", "tapped"), ["E01-S02 AC-1"])
+        self.assertEqual(cites("kavenegar"), ["§12.7 INT-sms", "§22 S-01"])
+        self.assertTrue(self.json_cli("search", "zebra", "unicorn")["silent"])
+
+    def test_hook_facts_are_silent_without_a_blueprint(self):
+        self.blueprint().unlink()
+        for cmd in ("context", "review-facts"):
+            self.assertFalse(self.json_cli(cmd)["applies"])
+
+    def test_a_proposed_answer_names_its_source(self):
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E01")
+
+        def stop(message, **extra):
+            return self.run_cli("hook", stdin=json.dumps({"hook_event_name": "Stop", "last_assistant_message": message, **extra}),
+                                check=False)
+
+        res = stop("**Recommended:** Option B - store integer rials\n")
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("names no source", res.stderr)
+        self.assertEqual(stop("**Recommended:** Option B - integer rials [BLUEPRINT — §4 DR-01]\n").returncode, 0)
+        self.assertEqual(stop("**Suggested:** 30 days [NOT IN BLUEPRINT — searched: retention]\n").returncode, 0)
+        self.assertEqual(stop("**Recommended:** B\n", stop_hook_active=True).returncode, 0)
+        self.assertEqual(stop("All done.").returncode, 0)
+        self.configure("guard: false\n")
+        self.assertEqual(stop("**Recommended:** B\n").returncode, 0)
+
+    def test_rules_say_where_answers_come_from(self):
+        self.json_cli("bootstrap")
+        c = (self.tmp / ".specify" / "memory" / "constitution.md").read_text(encoding="utf-8")
+        self.assertIn("VI. Answers come from the blueprint", c)
+        self.assertIn("until a\npass found nothing", c)
+        claude = (self.tmp / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("[BLUEPRINT — <section or ID>]", claude)
+        self.assertIn("blueprint.py search", claude)
+        res = self.run_cli("hook", stdin=json.dumps({"hook_event_name": "SessionStart", "session_id": "s"}))
+        self.assertIn("[BLUEPRINT", res.stdout)
+
+    def test_fixed_principles_are_part_of_the_content_hash(self):
+        from unittest import mock
+
+        from speckit_blueprint import bootstrap
+        from speckit_blueprint.config import bp_config, config_from
+        from speckit_blueprint.model import Blueprint
+
+        cfg = bp_config(config_from([]))
+        bp = Blueprint(self.blueprint())
+        before = bootstrap.rules_body(bp, cfg)[2]
+        with mock.patch.object(bootstrap, "FIXED_PRINCIPLES", bootstrap.FIXED_PRINCIPLES + "\nmore"):
+            self.assertNotEqual(bootstrap.rules_body(bp, cfg)[2], before)
+
+
+class ReviewLoopTest(ProjectTest):
+    """0.6: review passes that fix nothing, fixes in the session, until a complete pass finds nothing."""
+
+    REVIEW = "specs/002-e01-record-sales/review.md"
+
+    def setUp(self):
+        super().setUp()
+        self.json_cli("bootstrap")
+        self.json_cli("compile", "E00")
+        self.finish("E00")
+        self.json_cli("compile", "E01")
+        (self.feature() / "tasks.md").write_text("- [x] T001 a\n")
+
+    def e01(self):
+        return next(e for e in self.state()["epics"] if e["epic"] == "E01")
+
+    def test_trace_records_the_review_scope(self):
+        trace = json.loads((self.feature() / ".blueprint.json").read_text(encoding="utf-8"))
+        self.assertEqual(trace["review_loop"], 1)
+        self.assertEqual(trace["dod"], ["All stories DONE; `check` green."])
+
+    def test_the_review_loop_drives_next(self):
+        facts = self.json_cli("review-facts")["review_loop"]
+        self.assertEqual((facts["next"], facts["next_pass"], facts["max_passes"]), ("review", 1, 5))
+        self.assertEqual(facts["scope"]["checklist_items"], 10)
+        review = self.feature() / "review.md"
+        finding = "| RV1-1 | high | src/sale.ts:4 | rejects 0 | E01-S01 AC-2 | {} |\n"
+        body = ("Status: IN PROGRESS\n\n## Review passes\n\n### Pass 1 — 2026-11-24 — effort max\nCoverage:\n"
+                "E01-S01 AC-1 ✔ · AC-2 ✘ RV1-1 · CL-1 to CL-10 ✔\nE01-S02 AC-1 ✔ · CL-1 to CL-10 ✔\nDoD-1 ✔\nFindings: 1\n"
+                "| ID | Severity | Where | Finding | Violates | Status |\n|---|---|---|---|---|---|\n")
+        review.write_text(body + finding.format("open"))
+        e01 = self.e01()
+        self.assertEqual((e01["state"], e01["review_open"]), ("implemented", ["RV1-1"]))
+        st = self.state()
+        self.assertIn("RV1-1", st["next"]["why"])
+        self.assertIn("fix", st["next"]["why"])
+        self.assertEqual(self.json_cli("review-facts")["review_loop"]["next"], "fix")
+        review.write_text(body + finding.format("fixed: accepts 0 now"))
+        self.assertIn("pass 2", self.state()["next"]["why"])
+        facts = self.json_cli("review-facts")["review_loop"]
+        self.assertEqual((facts["next"], facts["next_pass"]), ("review", 2))
+
+    def test_done_needs_a_complete_clean_last_pass(self):
+        evidence = "Status: DONE\nAC evidence: E01-S01 AC-1 to AC-2 test/sale\nE01-S02 AC-1 test/undo\n"
+        review = self.feature() / "review.md"
+        review.write_text(evidence)
+        self.assertEqual(self.e01()["state"], "implemented")  # no pass at all
+        partial = ("\n## Review passes\n\n### Pass 1 — 2026-11-24 — effort max\nCoverage:\n"
+                   "E01-S01 AC-1 to AC-2 ✔ · CL-1 to CL-9 ✔\nE01-S02 AC-1 ✔ · CL-1 to CL-10 ✔\nDoD-1 ✔\nFindings: none\n")
+        review.write_text(evidence + partial)
+        e01 = self.e01()
+        self.assertEqual((e01["state"], e01["review_incomplete"]), ("implemented", ["E01-S01 CL-10"]))
+        review.write_text(evidence + partial.replace("CL-1 to CL-9", "CL-1 to CL-10"))
+        self.assertEqual(self.e01()["state"], "done")
+
+    def test_findings_are_not_evidence(self):
+        review = self.feature() / "review.md"
+        review.write_text("Status: DONE\nAC evidence: E01-S01 AC-1 test/sale\nE01-S02 AC-1 test/undo\n"
+                          "\n## Review passes\n\n### Pass 1 — x — effort max\nCoverage:\nE01-S01 AC-2 ✔\nFindings: none\n")
+        self.assertIn("E01-S01 AC-2", self.e01()["review_missing"])
+
+    def test_a_review_written_before_the_loop_still_counts(self):
+        trace_path = self.feature() / ".blueprint.json"
+        trace = json.loads(trace_path.read_text(encoding="utf-8"))
+        trace.pop("review_loop")
+        trace_path.write_text(json.dumps(trace), encoding="utf-8")
+        (self.feature() / "review.md").write_text("Status: DONE\nAC evidence: E01-S01 AC-1 to AC-2 t\nE01-S02 AC-1 t\n")
+        self.assertEqual(self.e01()["state"], "done")
+
+    def test_a_reviewer_fixes_nothing(self):
+        def bash(cmd, agent="rv-1", level="max"):
+            p = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd},
+                 "effort": {"level": level}}
+            if agent:
+                p["agent_id"], p["agent_type"] = agent, "general-purpose"
+            return self.run_cli("hook", stdin=json.dumps(p), check=False)
+
+        def write(path, agent="rv-1"):
+            p = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "effort": {"level": "max"},
+                 "tool_input": {"file_path": str(path), "old_string": "a", "new_string": "b"}}
+            if agent:
+                p["agent_id"] = agent
+            return self.run_cli("hook", stdin=json.dumps(p), check=False)
+
+        req = "python3 .specify/extensions/blueprint/scripts/blueprint.py require-effort review --pass 1"
+        self.assertEqual(bash(req).returncode, 0)
+        res = write(self.tmp / "src" / "sale.ts")
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("fixes none", res.stderr)
+        self.assertEqual(write(self.base.parent / "elsewhere" / "x.ts").returncode, 2)  # outside the hub too
+        self.assertEqual(write(self.tmp / self.REVIEW).returncode, 0)
+        self.assertEqual(bash("git commit -am x").returncode, 2)
+        self.assertEqual(bash("npm test").returncode, 0)
+        self.assertEqual(write(self.tmp / "src" / "sale.ts", agent=None).returncode, 0)  # the session fixes
+        self.assertEqual(write(self.tmp / "src" / "sale.ts", agent="other").returncode, 0)
+        # each pass is a fresh subagent
+        res = bash(req.replace("--pass 1", "--pass 2"))
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("fresh subagent", res.stderr)
+        self.assertEqual(bash(req.replace("--pass 1", "--pass 2"), agent="rv-2").returncode, 0)
+        self.configure("guard: false\n")
+        self.assertEqual(write(self.tmp / "src" / "sale.ts").returncode, 0)
+
+    def test_review_passes_config(self):
+        self.configure("review_passes: 3\n")
+        self.assertEqual(self.json_cli("review-facts")["review_loop"]["max_passes"], 3)
+        self.configure("review_passes: 0\n")
+        self.assertIn("review_passes", self.run_cli("review-facts", check=False).stderr)
+        self.configure("review_passes: many\n")
+        self.assertIn("1 to 20", self.run_cli("review-facts", check=False).stderr)
+
+
+class CommandTextTest(unittest.TestCase):
+    """The commands and hooks the manifest declares, and the rules the 0.6 commands state."""
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def text(self, rel):
+        return (self.ROOT / rel).read_text(encoding="utf-8")
+
+    def test_manifest_hooks_and_commands(self):
+        manifest = self.text("extension.yml")
+        provided = set(re.findall(r"- name: (speckit\.blueprint\.\w+)\n\s+file: (commands/\w+\.md)", manifest))
+        for name, file in provided:
+            self.assertTrue((self.ROOT / file).is_file(), file)
+        for step in ("specify", "clarify", "plan", "tasks", "analyze", "checklist"):
+            self.assertRegex(manifest, rf"before_{step}:\n\s+command: speckit\.blueprint\.answers\n\s+optional: false")
+        self.assertIn(("speckit.blueprint.answers", "commands/answers.md"), provided)
+
+    def test_review_lists_then_fixes(self):
+        review = self.text("commands/review.md")
+        for gone in ("fix what fails instead of noting it", "Red → fix"):
+            self.assertNotIn(gone, review)
+        for rule in ("You fix nothing", "never stop at the first defect", "NEW subagent", "this session's level",
+                     "max_passes", "--pass <next_pass>"):
+            self.assertIn(rule, review)
+
+    def test_tags_are_the_same_everywhere(self):
+        from speckit_blueprint.answers import TAGS
+
+        for rel in ("references/conventions.md", "commands/answers.md", "templates/claude-block.md"):
+            text = self.text(rel)
+            self.assertTrue(all(t.rstrip(" —") in text for t in TAGS.values()), rel)
+
+    def test_uncited(self):
+        from speckit_blueprint.answers import uncited
+
+        self.assertEqual(len(uncited("**Recommended:** Option A - x\n\n**Suggested:** y [BLUEPRINT — §3]\n")), 1)
+        table = "**Suggested Answers**:\n| Option | Answer |\n|---|---|\n| A | x [BLUEPRINT — OQ-01 default] |\n\n"
+        self.assertEqual(uncited(table), [])
+        self.assertEqual(len(uncited("**Suggested Answers**:\n| Option | Answer |\n|---|---|\n| A | x |\n\n")), 1)

@@ -4,4 +4,4 @@ Standard library only, so it runs under any Python 3.9+ (including the interpret
 dispatcher uses for Claude Code hooks). The command line is `scripts/blueprint.py`; see `cli.py`.
 """
 
-__version__ = "0.5.8"
+__version__ = "0.6.0"

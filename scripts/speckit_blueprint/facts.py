@@ -100,7 +100,7 @@ def context_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
     if trace is None:
         return {"applies": False, "why": "the active feature was not compiled from a blueprint"}
     bcfg = bp_config(cfg, trace.get("blueprint_id") or cfg["id"])
-    if bcfg["id"] != cfg["id"]:
+    if bp is None or bcfg["id"] != cfg["id"]:
         bp = Blueprint(root / bcfg["blueprint_path"])
     epic = bp.epic(trace["epic"][1:])
     st = project_status(root, bcfg)
@@ -156,7 +156,7 @@ def review_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
     if trace is None:
         return {"applies": False, "why": "the active feature was not compiled from a blueprint"}
     bcfg = bp_config(cfg, trace.get("blueprint_id") or cfg["id"])
-    if bcfg["id"] != cfg["id"]:
+    if bp is None or bcfg["id"] != cfg["id"]:
         bp = Blueprint(root / bcfg["blueprint_path"])
     epic = bp.epic(trace["epic"][1:])
     acs = trace.get("acs") or (epic_acs(epic) if epic else {})
@@ -186,4 +186,75 @@ def review_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
                          for r in repos],
         "effort": bcfg["effort"].get("review"),
         "effort_model": bcfg.get("effort_model", "inherit"),
+        "review_loop": review_loop_facts(root, bcfg, d, trace, acs),
     }
+
+
+def review_loop_facts(root: Path, cfg: dict, d: Path, trace: dict, acs: dict) -> dict:
+    """What every pass must cover, and where the loop stands."""
+    from .review import checklist_items, loop_state
+
+    n_items = checklist_items(root / cfg["review_checklist_path"])
+    dod = trace.get("dod") or []
+    state = loop_state(d / "review.md", acs, n_items, len(dod))
+    return {"max_passes": cfg.get("review_passes", 5), **state,
+            "scope": {"stories": acs, "checklist_items": n_items, "dod": dod}}
+
+
+def answers_facts(root: Path, cfg: dict, bp: Blueprint | None, step: str) -> dict:
+    """For the answers hook before a Spec Kit command that asks questions: where this feature's defaults
+    come from. A compiled feature always; otherwise, before specify or plan in a project with a blueprint,
+    the products the description may be about."""
+    from .answers import RULE, TAGS, open_questions
+
+    d, trace = feature_context(root, cfg)
+    if trace is not None and step != "specify":
+        bcfg = bp_config(cfg, trace.get("blueprint_id") or cfg["id"])
+        path = root / bcfg["blueprint_path"]
+        if bp is None or bcfg["id"] != cfg["id"]:
+            bp = Blueprint(path) if path.is_file() else None
+        epic = bp.epic(trace["epic"][1:]) if bp else None
+        oqs = []
+        if epic is not None:
+            from .compiler import epic_refs
+
+            _, pairs, _ = epic_refs(bp, epic, bcfg)
+            rows = [(bp.lines[u.header[0]], bp.lines[u.start]) for i, u in pairs
+                    if i.startswith("OQ-") and u.kind == "row" and u.header]
+            oqs = open_questions(rows)
+        flag = f" --blueprint {bcfg['id']}" if cfg.get("multi") else ""
+        script = "python3 .specify/extensions/blueprint/scripts/blueprint.py"
+        rel = d.relative_to(root).as_posix()
+        return {
+            "applies": True, "scope": "feature", "step": step, "blueprint_id": bcfg["id"],
+            "epic": trace["epic"], "feature_directory": rel, "rule": RULE, "tags": TAGS,
+            "look_in": [
+                {"where": f"{rel}/spec.md", "holds": "stories, ACs, edge cases, copy, success criteria; open questions with their defaults under Assumptions"},
+                {"where": f"{rel}/plan.md", "holds": "architecture, stack, conventions, repositories, task seeds"},
+                {"where": f"{rel}/research.md, data-model.md, contracts/", "holds": "decisions, drivers, entities, API rows, integrations"},
+                {"where": bcfg["decisions_path"], "holds": "decisions recorded since the blueprint"},
+                {"where": f"{script} search <words>{flag}", "holds": "any blueprint line, with the section and ID to cite"},
+                {"where": f"{script} find <ID>{flag} / section <n>{flag}", "holds": "a definition or a whole section"},
+            ],
+            "open_questions": oqs,
+            "record": {"product": "/speckit-blueprint-amend",
+                       "technical": f"{next_decision_id(root, bcfg, trace['epic'])} in {bcfg['decisions_path']}"},
+            "next_decision_id": next_decision_id(root, bcfg, trace["epic"]),
+            "decisions_log": bcfg["decisions_path"],
+        }
+    if step in ("specify", "plan") and (trace is None or step == "specify"):
+        products = []
+        for bid in cfg["blueprints"]:
+            b = bp_config(cfg, bid)
+            path = root / b["blueprint_path"]
+            if not path.is_file():
+                continue
+            other = bp if bp is not None and bp.path.resolve() == path.resolve() else Blueprint(path)
+            products.append({"id": bid, "blueprint": b["blueprint_path"], "product": other.title(),
+                             "decisions": b["decisions_path"],
+                             "epics": [{"id": e["id"], "title": e["title"]} for e in other.epics if not e["retired"]]})
+        if products:
+            return {"applies": True, "scope": "project", "step": step, "rule": RULE, "tags": TAGS,
+                    "blueprints": products}
+        return {"applies": False, "why": "no blueprint in this project"}
+    return {"applies": False, "why": "the active feature was not compiled from a blueprint"}

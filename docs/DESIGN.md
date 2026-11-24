@@ -96,7 +96,7 @@ overrides `repositories:` setting by setting: `evida-id: {remote: …}` there ke
 
 ## Commands and hooks
 
-Seven commands (skills), down from ten:
+Eight commands (skills):
 
 | Command | Role |
 |---|---|
@@ -105,12 +105,14 @@ Seven commands (skills), down from ten:
 | `speckit-blueprint-amend` | Deliberate blueprint change. Same split. |
 | `speckit-blueprint-compile` | One epic → feature folder (thin wrapper over the script). |
 | `speckit-blueprint-context` | `before_implement` hook: facts from `blueprint.py context`, then the spec. |
-| `speckit-blueprint-review` | `after_implement` hook: facts from `blueprint.py review-facts`, the review itself in a subagent. |
+| `speckit-blueprint-review` | `after_implement` hook: facts from `blueprint.py review-facts`, then the review loop (passes in fresh subagents, fixes in the session). |
+| `speckit-blueprint-answers` | `before_specify`, `before_clarify`, `before_plan`, `before_tasks`, `before_analyze`, `before_checklist` hooks: facts from `blueprint.py answers`; proposed answers come from the blueprint. |
 | `speckit-blueprint-hook` | Internal carrier for Claude Code events; its script dispatches on `hook_event_name`. |
 
 Removed as commands: `lint`, `bootstrap`, `status` (script subcommands, run by the commands above),
-`guard` (merged into `hook`). The optional `before_specify` hook is gone: flow covers "build the next
-epic", and the prompt it printed on every `/speckit-specify` was noise in projects with other features.
+`guard` (merged into `hook`). The 0.4 `before_specify` prompt is gone: flow covers "build the next
+epic". From 0.6 `before_specify` runs the answers command instead, which says nothing in a project
+without a blueprint and, with one, only grounds the defaults of a description about its product.
 
 Events: `session_start`, `pre_tool_use` (matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`) and `stop`
 all point at `speckit.blueprint.hook`.
@@ -162,8 +164,8 @@ below). Since a branch only builds on what is merged into it, this is the right 
 for several, the hub branch of an epic is merged last, after every repository branch, so a DONE visible
 in the hub implies the code is merged everywhere.
 
-The constitution has a sixth state, `outdated`: the content hash of the configured sections differs from
-the one recorded in the managed block. `next` is then bootstrap, before anything else.
+The constitution has a sixth state, `outdated`: the content hash of the configured sections and the fixed
+principles differs from the one recorded in the managed block. `next` is then bootstrap, before anything else.
 
 `Status: DONE` counts only when review.md has an `AC evidence` entry for every `AC-n` of every story of
 the epic; otherwise status reports the epic `implemented` with the missing ACs. The one exception is a
@@ -174,6 +176,51 @@ with review.md's hash), and it counts while review.md is unchanged. Status marks
 One entry may name several ACs of its story: a range (`AC-1 to AC-5`, `AC-1 to 5`, `AC-1 through AC-5`,
 `AC-1–AC-4`, `AC-1–4`, `AC-1…3`, `AC-1...3`) counts for every AC in it, a pair (`AC-5/6`) for both. A
 number ends where its digits do: `AC-12` never counts for `AC-1`, nor `AC-1` for `AC-12`.
+
+## Answers from the blueprint
+
+Spec Kit's commands propose answers "based on best practices". In a blueprint feature the blueprint
+already decided them with evidence, so a model's guess there is a silent deviation. Four layers:
+
+- **Rules every session and subagent loads:** constitution principle VI, the `CLAUDE.md` block, the
+  session-start brief and conventions §8. Defaults carry a tag in the upstream evidence style:
+  `[BLUEPRINT — §12.4 ENT-Order]`, or `[NOT IN BLUEPRINT — searched: …]` with the suggestion marked as the
+  model's own. An accepted answer becomes an amendment (product) or a decision record (technical).
+- **Hooks at each questioning step:** `before_specify/clarify/plan/tasks/analyze/checklist` run
+  `speckit.blueprint.answers` (`optional: false`). Its facts (`blueprint.py answers --step S`): for the
+  active compiled feature, where to look (feature folder, decisions log, `search`/`find`/`section`), the
+  epic's open questions with their defaults, and where answers are recorded; before specify or plan
+  elsewhere in a project with a blueprint, the products and their epics. Otherwise `applies: false`.
+- **Script support:** `blueprint.py search <words>` returns blueprint lines with the section and the ID
+  (definition, story, `AC-n`) to cite, so a citation does not mean reading the blueprint.
+- **A Stop check:** in a blueprint feature, a reply whose `**Recommended:**`, `**Suggested:**` or
+  `**Suggested Answers**` carries neither tag is sent back once (`stop_hook_active` stops a loop).
+  Translated markers pass (fail open). Tied to `guard`.
+
+Rejected: Spec Kit presets that rewrite the core commands (they would fork upstream text), a PreToolUse
+check on AskUserQuestion (it cannot tell a product question from "commit now?"), and SubagentStart
+context (Spec Kit has no such event).
+
+## Review loop
+
+A reviewer that fixes as it goes stops looking while it fixes, and judges its own fixes. So review and
+fix are split:
+
+- **Pass:** a NEW subagent at `effort.review` (default max) runs `require-effort review --pass N`, goes
+  through every story, AC, checklist item (`CL-n`, file order) and Definition of Done line (`DoD-n`, the
+  trace's `dod`) to the end, and writes `### Pass N` under `## Review passes` in review.md: coverage
+  lines, then `Findings: n|none` and a table of `RVN-k` rows. It fixes nothing; upstream's "stop at the
+  first unanswered item and fix it" is for an author's self-review.
+- **Fix:** the session that ran the review fixes every finding at its own level (the user's choice, not
+  a guaranteed step), marks each row `fixed: …`, and starts a fresh pass. Only the user accepts a finding.
+- **Stop:** a complete pass with no finding (it writes `Status: DONE` and the handoff), `review_passes`
+  passes in one run (default 5), no progress, or only findings the user must decide.
+- **Enforcement:** the hook registers the subagent (`agent_id`) as pass N on the board; it then refuses
+  it any write but its feature's review.md (even in code repositories outside the hub), commands that
+  change the work (`git add/commit/checkout/…`, `sed -i`), and a different pass number. Status counts
+  `Status: DONE` for a folder whose trace has `review_loop` only when the last pass names every AC and
+  checklist item of every story and every DoD line, and has no open or fixed finding. A findings table
+  is never AC evidence. Folders compiled before 0.6 keep the 0.5 rule.
 
 ## Parallel epics
 
@@ -243,6 +290,8 @@ save one clone.
   lower, naming the cause (`CLAUDE_CODE_EFFORT_LEVEL`, an organization cap, the model). The guard also
   refuses an Edit/Write of a blueprint file, or of `Status: DONE` into review.md, below the configured
   level. When the hook input carries no effort (older Claude Code), nothing is blocked.
+- The fixes between review passes are deliberately not a guaranteed step: they follow a decided list,
+  so they run at whatever level the user chose for the session.
 
 ## Metrics
 
@@ -348,7 +397,7 @@ sprints as a ribbon, its progress and finish), and the timeline shows one row pe
 
 ## Migration and versioning
 
-- Semver; this release is 0.5.8 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
+- Semver; this release is 0.6.0 (0.5.0 was breaking). 1.0.0 once the model has run on a real project.
 - `blueprint.py migrate [--apply]` (dry run by default) upgrades a project to schema 2: adds `schema: 2`;
   turns `sources` paths into `repositories:` entries; converts `**Target repositories**` +
   prose `**Repositories**` into the table (keeping explicit branch names in the Branch column); adds

@@ -354,7 +354,7 @@ def compile_epic(root: Path, cfg: dict, bp: Blueprint, epic_ref: str, force: boo
         "├── quickstart.md    # how to verify the epic (compiled)",
         "├── contracts/       # API rows and integration cards (compiled)",
         "├── tasks.md         # /speckit-tasks output",
-        "└── review.md        # /speckit-blueprint-review output (handoff)",
+        "└── review.md        # /speckit-blueprint-review output (review passes and handoff)",
         "```",
         "",
         "### Source Code (repository root)",
@@ -502,6 +502,10 @@ def compile_epic(root: Path, cfg: dict, bp: Blueprint, epic_ref: str, force: boo
         "depends": [f"{b}:{e}" if b else e for b, e in epic["depends"]],
         "repositories": rows,
         "acs": {st["id"]: st["acs"] for st in epic["stories"]},
+        # 0.6: DONE needs a complete review pass that found nothing (DoD-n are these lines, in order).
+        "review_loop": 1,
+        "dod": [ln.strip()[2:].strip() for ln in label_block(footer_text, "Definition of Done").split("\n")[1:]
+                if ln.strip().startswith(("- ", "* "))],
         "units": unit_hashes,
         "unresolved": unresolved,
         "compiled_at": _dt.datetime.now().isoformat(timespec="seconds"),

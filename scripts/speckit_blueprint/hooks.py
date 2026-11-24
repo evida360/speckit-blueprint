@@ -5,7 +5,10 @@ The event's JSON arrives on stdin; `hook_event_name` picks the handler:
 - PreToolUse: the guard (compiled files, managed blocks, guaranteed effort for blueprint and review
   writes) and, for Bash, `require-effort` and the one-epic-per-worktree check for compile/activate.
 - Stop: register the session and summarise its transcript into the metrics store, with the feature
-  active now; summarise again the sessions that ended since (their cost arrives when they end).
+  active now; summarise again the sessions that ended since (their cost arrives when they end). In a
+  blueprint feature, a Spec Kit recommendation that names no source keeps the agent going once.
+- Review passes: a subagent that ran `require-effort review --pass N` writes only its feature's review.md
+  and runs no command that changes the work; a second pass needs a fresh subagent.
 
 A hook never blocks a session because of its own failure: errors end in exit 0.
 """
@@ -108,7 +111,28 @@ def stop(root: Path, cfg: dict, payload: dict) -> int:
         ctx = Ctx(root, cfg)
         summarise_session(root, cfg, Path(payload["transcript_path"]), ctx, active=active_feature(root) or "")
         refresh_finished(root, cfg, ctx, skip=payload.get("session_id"))
-    return 0
+    msg = uncited_defaults(root, cfg, payload)
+    return block(msg) if msg else 0
+
+
+def uncited_defaults(root: Path, cfg: dict, payload: dict) -> str | None:
+    """A Spec Kit recommendation (`**Recommended:**`, `**Suggested:**`, `**Suggested Answers**`) in a
+    blueprint feature that names no source (conventions §8). Once per turn: never when the Stop hook
+    already kept the agent going."""
+    if not cfg.get("guard", True) or payload.get("stop_hook_active"):
+        return None
+    fd = active_feature(root)
+    if not fd or read_trace(root / fd) is None:
+        return None
+    from .answers import uncited
+
+    lines = uncited(str(payload.get("last_assistant_message") or ""))
+    if not lines:
+        return None
+    return ("speckit-blueprint: a proposed answer in a blueprint feature names no source: "
+            + " · ".join(lines[:3]) + ". Look it up (`blueprint.py answers`, `search <words>`, `find <ID>`, "
+            "`section <n>`) and tag it `[BLUEPRINT — <section or ID>]`, or say `[NOT IN BLUEPRINT — searched: …]` "
+            "and mark it as your own (conventions §8). Restate the question with its source.")
 
 
 def block(message: str) -> int:
@@ -126,6 +150,9 @@ def pre_tool_use(root: Path, cfg: dict, payload: dict) -> int:
     fp = ti.get("file_path") or ti.get("notebook_path")
     if not fp:
         return 0
+    msg = reviewer_write(root, cfg, payload, fp)  # before the hub check: code repositories live outside it
+    if msg:
+        return block(msg)
     try:
         rel = (root / fp).resolve().relative_to(root.resolve())
     except ValueError:
@@ -193,12 +220,61 @@ def bash_check(root: Path, cfg: dict, payload: dict, command: str) -> int:
         msg = shortfall(cfg, m.group(1), payload, f"the {m.group(1)} step")
         if msg:
             return block(msg)
+        if m.group(1) == "review" and m.group(2) and payload.get("agent_id") and cfg.get("guard", True):
+            msg = start_review_pass(root, payload, int(m.group(2)))
+            if msg:
+                return block(msg)
+    who = reviewer_entry(root, cfg, payload)
+    if who and MUTATING_RE.search(command):
+        return block(REVIEWER_REFUSAL.format(what=f"`{command.strip()[:80]}`"))
     m = COMPILE_RE.search(command)
     if m and target_folder(root, cfg, m.group(2)) != active_feature(root):
         msg = same_tree_conflict(root, payload)
         if msg:
             return block(msg)
     return 0
+
+
+REVIEWER_REFUSAL = ("speckit-blueprint: a review pass lists defects and fixes none: {what} would change the work "
+                    "under review. Write it as a finding in this pass; the session fixes the findings after the pass "
+                    "and a fresh pass reviews everything again.")
+# Commands a reviewer may not run: they change the work, the index or the history.
+MUTATING_RE = re.compile(r"\bgit\s+(add|commit|stash|checkout|switch|reset|restore|apply|rebase|merge|cherry-pick|rm|mv)\b"
+                         r"|\bsed\s+(-[a-zA-Z]*i|--in-place)|\bperl\s+-[a-zA-Z]*i")
+
+
+def reviewer_entry(root: Path, cfg: dict, payload: dict) -> dict | None:
+    if not cfg.get("guard", True) or not payload.get("agent_id"):
+        return None
+    from .board import reviewer
+
+    return reviewer(root, payload["agent_id"])
+
+
+def start_review_pass(root: Path, payload: dict, n: int) -> str | None:
+    """Register this subagent as review pass n; a subagent that already ran a pass may not run another."""
+    from .board import register_reviewer
+
+    feature = active_feature(root)
+    earlier = register_reviewer(root, payload["agent_id"], {"feature": feature, "pass": n, "worktree": str(root.resolve())})
+    if earlier and earlier.get("pass") != n:
+        return (f"speckit-blueprint: review pass {n} must start in a fresh subagent; this one reviewed pass "
+                f"{earlier.get('pass')}. Start a new subagent with the Agent tool (never SendMessage to an earlier "
+                "reviewer), so the pass reviews everything from scratch.")
+    return None
+
+
+def reviewer_write(root: Path, cfg: dict, payload: dict, fp: str) -> str | None:
+    """A registered reviewer writes its feature's review.md and nothing else."""
+    who = reviewer_entry(root, cfg, payload)
+    if not who:
+        return None
+    wt = Path(who.get("worktree") or root)
+    allowed = (wt / (who.get("feature") or "") / "review.md").resolve() if who.get("feature") else None
+    target = (root / fp).resolve()
+    if allowed is not None and target == allowed:
+        return None
+    return REVIEWER_REFUSAL.format(what=f"writing {fp}")
 
 
 def target_folder(root: Path, cfg: dict, ref: str) -> str | None:

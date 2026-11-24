@@ -13,7 +13,7 @@ import re
 
 from .config import EFFORT_STEPS, effort_rank
 
-REQUIRE_RE = re.compile(r"blueprint\.py[\"']?\s+require-effort\s+([a-z]+)")
+REQUIRE_RE = re.compile(r"blueprint\.py[\"']?\s+require-effort\s+([a-z]+)(?:\s+--pass[ =](\d+))?")
 
 
 def require_effort(cfg: dict, step: str) -> int:

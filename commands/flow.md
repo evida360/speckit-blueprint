@@ -36,9 +36,11 @@ belongs to another blueprint's epics, use that blueprint (`--blueprint <id>`).
 | wants to build another epic at the same time | `blueprint.py workspace <epic>`; show the plan; on their yes, `--create`, then tell them to open a session there with the printed command |
 | is on a new machine, or wants to continue a `started` epic | on its local branch (`started.local`) in a single repository: switch to that branch. Otherwise `blueprint.py workspace setup` (clones and fetches; see section 3), then `blueprint.py workspace <epic>`; show the plan (each worktree's start: `remote` continues the pushed branch); on their yes, `--create` and the printed command |
 | asks for a small fix to built code that changes no AC | record nothing in the blueprint; do it the way the project's rules say |
+| runs `/speckit-clarify` or `/speckit-checklist` on a compiled epic | let it run; its answers take their defaults from the blueprint (conventions §8) and become amendments or decision records, never edits to spec.md |
 | works on a feature without `.blueprint.json` | leave it to the project's own workflow |
 
-When unsure whether a request changes the product, treat it as an amendment and ask.
+When unsure whether a request changes the product, treat it as an amendment and ask, with the recommended
+answer tagged (conventions §8).
 
 ## 3. Run the next step
 
@@ -46,10 +48,10 @@ When unsure whether a request changes the product, treat it as an amendment and 
 |---|---|
 | `migrate` | Run `blueprint.py migrate` (a dry run), show the user the changes and warnings, and on their yes run it with `--apply`. Then status again. |
 | `bootstrap` | Run `next.run`. Tell the user the constitution amendment it reports (`constitution.amendment`) and anything their governance asks beyond a version bump. In `own` mode never run `/speckit-constitution` afterwards. |
-| `speckit-blueprint-compile` | `/speckit-blueprint-compile <epic>` (`<id>:<epic>` with several blueprints), then `/speckit-tasks` and `/speckit-analyze` in this session. A defect analyze finds in spec.md, plan.md or the data model is an amendment; one only in tasks.md is fixed in tasks.md. |
+| `speckit-blueprint-compile` | `/speckit-blueprint-compile <epic>` (`<id>:<epic>` with several blueprints), then `/speckit-tasks` and `/speckit-analyze` in this session. The answers hook runs before each. A defect analyze finds in spec.md, plan.md or the data model is an amendment naming the blueprint text it changes; one only in tasks.md is fixed in tasks.md. Never `/speckit-specify` or `/speckit-plan` for a compiled epic. |
 | `speckit-tasks` | `/speckit-tasks`, then `/speckit-analyze`. |
 | `speckit-implement` | If `next.activate` is set, first `blueprint.py activate <next.activate>`. Then `/speckit-implement`. |
-| `speckit-blueprint-review` | `/speckit-blueprint-review`. |
+| `speckit-blueprint-review` | `/speckit-blueprint-review`: the review loop. When it stops with open findings, that is a gate (section 4). |
 | `wait` | Every remaining epic is blocked, built elsewhere or started on another branch: say which and why; offer to continue a started epic, to build a ready epic of another blueprint, or to finish the dependency first. |
 | `speckit-blueprint-discover` with `state: all-done` | Every epic of this blueprint is done: offer incremental discovery; name any other blueprint with work left. |
 
@@ -77,15 +79,17 @@ Before an epic step, two checks:
 
 Steps listed under `effort` (discover, amend, review by default) start their own subagent at that level
 (conventions §3); the session's own level does not matter and there is nothing to ask the user about it.
+A review starts a new subagent for every pass and makes its fixes in this session, at its own level.
 
 ## 4. Gates you never pass for the user
 
 - Approval of the decision brief in discover.
 - Amendments that change user-visible behaviour, money, data retention or security.
 - `migrate --apply`, and creating worktrees with `workspace --create` unless they asked for parallel work.
+- A review that stopped with open findings: the user chooses among the listed options.
 - `git commit` and `git push`.
 
 ## 5. When you stop
 
 Run `blueprint.py status --brief` and tell the user in a few lines what was done, what they must check or
-decide, and what comes next.
+decide (each choice with its recommended answer, conventions §8), and what comes next.

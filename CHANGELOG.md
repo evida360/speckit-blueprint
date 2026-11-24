@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 — 2026-11-24
+
+Answers come from the blueprint, and the review is a loop.
+
+- **Answers from the blueprint.** Every question asked while building a blueprint feature, by this
+  extension or by Spec Kit (clarify's Recommended option, specify's Suggested Answers, analyze's
+  recommendations and remediation offer, checklist's defaults, a plan unknown, the tasks scope,
+  implement's "proceed?"), proposes the answer the blueprint decides, tagged
+  `[BLUEPRINT — <section or ID>]`, or says `[NOT IN BLUEPRINT — searched: …]` and marks the suggestion as
+  the model's own. New command `speckit.blueprint.answers` on six hooks (`before_specify`,
+  `before_clarify`, `before_plan`, `before_tasks`, `before_analyze`, `before_checklist`); new
+  `blueprint.py answers --step S` and `blueprint.py search <words>`; conventions §8; constitution
+  principle VI; the `CLAUDE.md` block and the session brief say it too. In a blueprint feature the Stop
+  hook sends back once a recommendation that names no source (with `guard`).
+- **Review loop.** Each review pass runs in a new subagent at `effort.review` (max by default), fixes
+  nothing and lists every defect in review.md (`### Pass N`, findings `RVN-k`); the session fixes them all
+  at its own level, then a fresh pass reviews everything again, until one finds nothing. `review_passes`
+  (default 5) caps one run. A hook refuses a reviewer any write but its review.md, commands that change
+  the work, and a second pass. For folders compiled from 0.6 on, DONE also needs the last pass to cover
+  every AC and checklist item of every story and every Definition of Done line with no finding;
+  `review-facts` reports `review_loop` and `next` says whether to fix or to run the next pass.
+- `blueprint.py context` and `review-facts` report `applies: false` instead of failing in a project
+  whose blueprint file does not exist.
+- The constitution's content hash now includes its fixed principles, so status asks for bootstrap once.
+
+Upgrade: add the extension again (`specify extension add … v0.6.0`) to register the new command and
+hooks, then run `blueprint.py bootstrap` when status asks.
+
 ## 0.5.8 — 2026-11-17
 
 `--help` after a command prints that command's usage and runs nothing.

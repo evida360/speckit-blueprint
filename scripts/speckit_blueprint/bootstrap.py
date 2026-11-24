@@ -33,8 +33,15 @@ blueprint does not cover is recorded in `{decisions}` (`DR-E03-1`: numbered with
 taken in) in the same commit.
 
 ### {n}V. Review before done
-An epic is done only after `/speckit-blueprint-review` walked `{checklist}` over its diff and
-wrote `review.md` with `Status: DONE`."""
+An epic is done only after `/speckit-blueprint-review` reviewed it in full passes, each by a fresh
+reviewer at the guaranteed effort that fixes nothing and walks `{checklist}` over every story, until a
+pass found nothing, and wrote `review.md` with `Status: DONE`.
+
+### {n}VI. Answers come from the blueprint
+A default or recommended answer to any question about a feature compiled from `{bp}` comes from that
+feature's compiled files, `{decisions}` or `{bp}`, tagged with where (`[BLUEPRINT — §12.4 ENT-Order]`).
+When none decides it, the question says so (`[NOT IN BLUEPRINT — …]`), and the accepted answer becomes
+an amendment or a decision record."""
 
 
 def bump_version(old: str | None) -> str:
@@ -57,7 +64,8 @@ def rules_body(bp: Blueprint, cfg: dict) -> tuple[list[str], list[str], str]:
             body += [demote(t, 3), ""]
         else:
             missing.append(str(key))
-    return body, missing, sha("\n".join(body))
+    # The fixed principles count too: a change to them makes status report the constitution outdated.
+    return body, missing, sha(FIXED_PRINCIPLES + "\n" + "\n".join(body))
 
 
 def lint_gate(bp: Blueprint, cfg: dict) -> list[str]:

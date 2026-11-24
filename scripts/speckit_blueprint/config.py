@@ -50,6 +50,8 @@ DEFAULTS = {
     # local: metrics from Claude Code transcripts, kept in the hub's .git; commit: also a summary per epic
     # in its feature folder; off: none.
     "metrics": "local",
+    # The most review passes one review run makes before it stops and asks the user (1 to 20).
+    "review_passes": 5,
 }
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
@@ -228,6 +230,13 @@ def config_from(raws: list) -> dict:
         cfg["implicit"] = True
     cfg["blueprints"] = blueprints
     cfg["effort"] = effort_config(cfg.get("effort"))
+    try:
+        passes = int(str(cfg.get("review_passes", DEFAULTS["review_passes"])).strip())
+    except ValueError:
+        passes = 0
+    if not 1 <= passes <= 20:
+        raise ConfigError(f"review_passes: '{cfg.get('review_passes')}' must be a number of passes (1 to 20)")
+    cfg["review_passes"] = passes
     cfg["repositories"] = repo_entries(cfg)
     metrics = str(cfg.get("metrics") if cfg.get("metrics") is not False else "off").strip().lower()
     if metrics not in METRICS_MODES:

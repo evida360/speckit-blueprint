@@ -13,11 +13,13 @@ Usage (from the project root; the extension installs this file under
     blueprint.py bootstrap [--skip-lint]     constitution rules, CLAUDE.md block, REVIEW-CHECKLIST, DECISIONS
     blueprint.py activate E03|<folder>       make a compiled epic the active feature
     blueprint.py context                     facts for the before_implement hook (JSON)
-    blueprint.py review-facts                facts for the review: ACs, repositories, diffs, gates (JSON)
+    blueprint.py review-facts                facts for the review loop: ACs, checklist, passes, diffs, gates (JSON)
+    blueprint.py answers [--step S]          where a question's default comes from (the answers hook, JSON)
     blueprint.py migrate [--apply]           upgrade a schema-1 project (dry run without --apply)
   Blueprint
     blueprint.py section 14.4 [13.4 ...]     print blueprint sections by number (read less, not all)
     blueprint.py find ENT-Order [SCR-03 ...] print the blueprint definitions of IDs
+    blueprint.py search <words…> [--limit N] blueprint lines holding every word, with the section and ID to cite
     blueprint.py rules                       the constitution rules that govern this blueprint's features
     blueprint.py lint                        the structural linter, then refs
     blueprint.py refs                        per epic: IDs compile can or cannot resolve (exit 1 if any cannot)
@@ -36,7 +38,8 @@ Usage (from the project root; the extension installs this file under
     blueprint.py workspace link [--dry-run]  a block in each code repository's CLAUDE.md that points to the hub
     blueprint.py claims [--release KEY]      which worktree builds which epic
   Effort, metrics, dashboard
-    blueprint.py require-effort <step>       first command of a guaranteed-effort subagent (checked by the hook)
+    blueprint.py require-effort <step> [--pass N]
+                                             first command of a guaranteed-effort subagent (checked by the hook)
     blueprint.py metrics [E03] [--json] [--write] [--backfill [--transcripts DIR ...]]
     blueprint.py estimate [E05] [--json]     time, cost and calendar ranges for one epic or what remains
     blueprint.py dashboard [--port N] [--no-open] [--export FILE]
@@ -218,6 +221,31 @@ def run(root: Path, cfg: dict, cmd: str, args: list[str], wanted: str | None) ->
             cache[b] = Blueprint(path)
         return cache[b]
 
+    if cmd in ("context", "review-facts", "answers"):
+        # Hooks run these before every Spec Kit command: a project without its blueprint file gets
+        # `applies: false`, never an error.
+        from .facts import answers_facts, context_facts, review_facts
+
+        path = root / bcfg["blueprint_path"]
+        bp0 = load(bid) if path.is_file() else None
+        if cmd == "answers":
+            step, _ = pop_option(args, "--step")
+            dump(answers_facts(root, bcfg, bp0, (step or "clarify").strip().lower()))
+        else:
+            dump((context_facts if cmd == "context" else review_facts)(root, bcfg, bp0))
+        return 0
+
+    if cmd == "search":
+        limit, rest = pop_option(args, "--limit")
+        words = [a for a in rest if not a.startswith("--")]
+        if not words:
+            print("usage: blueprint.py search <words…> [--limit N]", file=sys.stderr)
+            return 1
+        bp = load(bid)
+        hits = bp.search(words, int(limit) if limit and limit.isdigit() else 40)
+        dump({"blueprint_id": bid, "blueprint": bcfg["blueprint_path"], "terms": words, "hits": hits, "silent": not hits})
+        return 0
+
     if cmd in ("section", "find"):
         # Each argument may name its blueprint: `desk:DR-03`, `one:14.4`.
         rc = 0
@@ -357,11 +385,6 @@ def run(root: Path, cfg: dict, cmd: str, args: list[str], wanted: str | None) ->
             dump(out)
             return 0 if all(w["result"] in ("created", "exists") for w in out["worktrees"]) and not out.get("claim_conflict") else 1
         dump({**p, "git": git_commands(p)})
-        return 0
-    if cmd in ("context", "review-facts"):
-        from .facts import context_facts, review_facts
-
-        dump((context_facts if cmd == "context" else review_facts)(root, bcfg, bp))
         return 0
     if cmd == "metrics":
         from .metrics import epic_metrics, write_epic_summary

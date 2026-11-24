@@ -336,6 +336,45 @@ class Blueprint:
             if m and (len(first) == m.end() or first[m.end()] in " ("):
                 self._add(m.group(1), Unit("row", i, i + 1, header))
 
+    def search(self, words: list[str], limit: int = 40) -> list[dict]:
+        """Lines holding every word (case-insensitive), each with the citation a proposed answer gives it:
+        the innermost numbered section, and the smallest ID definition, story or epic that holds the line
+        (with `AC-n` on an acceptance-criterion line)."""
+        terms = [w.lower() for w in words if w.strip()]
+        if not terms:
+            return []
+        spans = [(u.start, u.end, ident) for ident, units in self.defs.items() for u in units]
+        hits = []
+        for i, line in enumerate(self.lines):
+            low = line.lower()
+            if not line.strip() or not all(t in low for t in terms):
+                continue
+            sec = None
+            for h in self.headings:
+                if h.idx > i:
+                    break
+                if h.number and h.idx <= i < h.end:
+                    sec = h.number
+            ident = None
+            inside = [(e - s, x) for s, e, x in spans if s <= i < e]
+            if inside:
+                ident = min(inside)[1]
+            for ep in self.epics:
+                if ep["start"] <= i < ep["end"]:
+                    ident = ep["id"]
+                    for st in ep["stories"]:
+                        if st["start"] <= i < st["end"]:
+                            ident = st["id"]
+                            ac = re.search(r"\bAC-(\d+)\b", line)
+                            if ac:
+                                ident += f" AC-{ac.group(1)}"
+                    break
+            cite = " ".join(x for x in ((f"§{sec}" if sec else ""), ident or "") if x) or f"line {i + 1}"
+            hits.append({"line": i + 1, "section": sec, "id": ident, "cite": cite, "text": line.strip()[:240]})
+            if len(hits) >= limit:
+                break
+        return hits
+
     def resolve(self, ids: list[str]) -> list[tuple[str, Unit]]:
         out = []
         for ident in ids:
