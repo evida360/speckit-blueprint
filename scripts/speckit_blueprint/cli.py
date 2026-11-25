@@ -37,6 +37,20 @@ Usage (from the project root; the extension installs this file under
                                              and fetch the others (every repository, or the epic's)
     blueprint.py workspace link [--dry-run]  a block in each code repository's CLAUDE.md that points to the hub
     blueprint.py claims [--release KEY]      which worktree builds which epic
+  Building an epic in segments (build.mode: segments; references/segments.md)
+    blueprint.py tasks-graph [--json] [--check]
+                                             the active feature's task graph: findings and the stage plan
+    blueprint.py segments start [--resume]   plan the open tasks into stages and start a run (orchestrator)
+    blueprint.py segments next [--retry S2b] the segments to start now, each with its prompt and effort
+    blueprint.py segments status             every segment's state, the questions waiting, what to do next
+    blueprint.py segments answer S2b         record the user's answers (stdin) and print what to send back
+    blueprint.py segments join               check the stage's ticks, run the gates, open the next stage
+    blueprint.py segments stop               end the run (ticked tasks stay done)
+    blueprint.py segment start|ask|done S2b  a segment's subagent: its brief, its questions, its handoff (stdin)
+    blueprint.py tick T012 [T013 ...]        tick tasks in tasks.md under a lock
+    blueprint.py decision add                a DR-E03-n record with its index row, numbered under a lock (stdin)
+    blueprint.py exclusive <name> -- <command ...>
+                                             run a command that shares ports or a database, one at a time
   Effort, metrics, dashboard
     blueprint.py require-effort <step> [--pass N]
                                              first command of a guaranteed-effort subagent (checked by the hook)
@@ -114,6 +128,12 @@ def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
+    if argv[0] == "exclusive":  # everything after `--` is the command, its own flags included
+        from .segments import exclusive
+
+        rest = argv[1:]
+        cut = rest.index("--") if "--" in rest else len(rest)
+        return exclusive(find_root(Path.cwd()), rest[0] if cut > 0 else "", rest[cut + 1:])
     if "-h" in argv[1:] or "--help" in argv[1:]:  # print the usage and run nothing: `dashboard --help` used to serve
         print(usage(argv[0]))
         return 0
@@ -171,6 +191,10 @@ def workspace_command(root: Path, cfg: dict, verb: str, args: list[str], wanted:
 def run(root: Path, cfg: dict, cmd: str, args: list[str], wanted: str | None) -> int:
     if cmd == "workspace" and args and args[0] in ("setup", "link"):
         return workspace_command(root, cfg, args[0], args[1:], wanted)
+    if cmd in ("tasks-graph", "segments", "segment", "tick", "decision"):
+        from .segments import command
+
+        return command(root, cfg, cmd, args)
     # `desk:E01` names the blueprint inline; it must agree with --blueprint when both are given.
     note, args = pop_option(args, "--note")
     keys = [a for a in args if not a.startswith("--")]

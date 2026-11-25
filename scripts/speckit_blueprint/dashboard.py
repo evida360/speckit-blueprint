@@ -65,6 +65,7 @@ def read_tasks(tasks: Path, stories: list, ticks: dict) -> list:
             story = stories[int(us.group(1)) - 1]
         repos = [r for r in REPO_PREFIX_RE.findall(text) if not re.match(r"^(us\d+|p)$", r, re.I)]
         title = re.sub(r"^(\[[^\]]+\]\s*)+", "", text)
+        title = re.sub(r"\s*\(\s*(?:depends\s+on|depends:|after)\b[^)]*\)", "", title, flags=re.I)
         title = SEED_RE.sub("", title, count=1).strip(" —-")
         out.append({"id": m.group(2), "done": m.group(1) in "xX", "story": story, "repository": repos[0] if repos else None,
                     "seed": seed.group(0) if seed else None, "title": title[:160], "ticked_at": iso(ticks.get(m.group(2)))})
@@ -121,7 +122,25 @@ def epic_entry(root: Path, cfg: dict, bcfg: dict, bp: Blueprint, e: dict, row: d
                   | {"tokens": sum(m["tokens"].values()), "first": iso(m["first"]), "last": iso(m["last"]),
                      "spans": [[iso(s), iso(x)] for s, x in intervals[-200:]]},
         "estimate": (est.get("epics") or {}).get(e["id"]) or (trace or {}).get("estimate"),
+        "build": build_entry(root, board, row.get("feature_directory"), m),
     }
+
+
+def build_entry(root: Path, board: dict, feature: str | None, m: dict) -> dict | None:
+    """The epic's build in segments: the plan, the stage being built, each segment's state."""
+    if not feature:
+        return None
+    from .segments import build_key
+
+    run = board.get("builds", {}).get(build_key(root, feature))
+    if not run:
+        return None
+    segs = [{"id": s["id"], "stage": s["stage"], "kind": s["kind"], "status": s["status"], "tasks": s["tasks"],
+             "questions": len(s.get("questions") or [])} for s in run["segments"].values()]
+    return {"run": run["run"], "status": run.get("status"), "plan": run.get("plan"), "effort": run.get("effort"),
+            "current": run.get("current"), "stages": [{"n": st["n"], "kind": st["kind"], "segments": st["segments"],
+                                                       "join": (st.get("join") or {}).get("ok")} for st in run["stages"]],
+            "segments": segs, "parallelism": m.get("parallelism")}
 
 
 def activity(transcript: Path) -> dict:
@@ -330,6 +349,19 @@ def statusline(root: Path) -> int:
         parts.append(label + (f"·{open_story.split('-')[-1]}" if open_story else ""))
         if rows:
             parts.append(f"{sum(t['done'] for t in rows)}/{len(rows)} tasks")
+        try:
+            from .board import load as load_board
+            from .segments import active_run
+
+            run = active_run(load_board(root), root, fd)
+            if run and run.get("current") is not None:
+                segs = [s for s in run["segments"].values() if s["stage"] == run["current"]]
+                n_stage = [st["n"] for st in run["stages"]].index(run["current"]) + 1
+                waiting = sum(s["status"] == "waiting" for s in segs)
+                parts.append(f"stage {n_stage}/{len(run['stages'])} · {len(segs)} segment{'s' if len(segs) != 1 else ''}"
+                             + (f" · {waiting} waiting" if waiting else ""))
+        except Exception:  # noqa: BLE001 - the status line never fails
+            pass
         est = trace.get("estimate")
         if est:
             parts.append(f"est {duration(est['agent_s'][0])}–{duration(est['agent_s'][1])}")

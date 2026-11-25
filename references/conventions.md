@@ -54,7 +54,10 @@ does not depend on the session's level. A step not listed runs here, at the sess
    reviewer), so each pass reviews everything from scratch. Its first command is `blueprint.py
    require-effort review --pass <n>`; the hook then refuses that subagent any write but its feature's
    `review.md`, any command that changes the work, and a second pass number.
-7. The review's fixes are not a guaranteed step: the session that runs the review makes them at its own
+7. Building in segments (`build: {mode: segments}`, references/segments.md) also runs in subagents, one
+   per segment, but at the session's own level: start each with the `effort` that `segments next`
+   prints, never one from `effort:`.
+8. The review's fixes are not a guaranteed step: the session that runs the review makes them at its own
    level. Start no subagent with an `effort` for them, and do not ask the user to change their level.
 
 The guard refuses to write a blueprint, its discovery checkpoints or `Status: DONE` in a review below the

@@ -16,7 +16,7 @@ open questions, sources) to its definition and writes a Spec Kit feature folder 
 it: one model for one to many repositories, epics built in parallel, reasoning effort guaranteed where it
 pays, and time, token and cost metrics with estimates and a live dashboard.
 
-Status: **0.6.0, Claude Code only.** Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
+Status: **0.6.0, Claude Code only** (0.7.0 in release candidate: building an epic in segments). Tested against Spec Kit 1.2.4 and idea-to-blueprint v1.1.1.
 
 ## Tested end to end
 
@@ -63,9 +63,9 @@ specify extension add blueprint --from https://github.com/mohsensamiei/speckit-b
 Installing from a URL asks for confirmation once (answer `y`). For development, install from a local
 clone with `specify extension add --dev /path/to/speckit-blueprint`.
 
-Installing registers eight commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
-around `/speckit-implement`, six answers hooks before Spec Kit's questioning commands (specify, clarify,
-plan, tasks, analyze, checklist), and three Claude Code hooks in `.claude/settings.json` (session start, tool
+Installing registers nine commands as Claude Code skills (`/speckit-blueprint-…`), two Spec Kit hooks
+around `/speckit-implement`, one after `/speckit-tasks` (the task graph), six answers hooks before Spec
+Kit's questioning commands (specify, clarify, plan, tasks, analyze, checklist), and three Claude Code hooks in `.claude/settings.json` (session start, tool
 use, stop) behind one internal handler.
 
 ## How you use it
@@ -157,6 +157,17 @@ Each epic says which repositories it changes, in order (providers before consume
   are there. Merge the repositories in the table's order and the hub's branch last, so a DONE visible in
   the hub means the code is merged everywhere.
 - Work that belongs to no blueprint stays each repository's own business.
+
+## Building one epic in segments
+
+Optional (`build: {mode: segments}` in the extension config). The tasks step writes each task's files
+and real dependencies (`(depends on T004)`), and `blueprint.py tasks-graph` plans the open tasks into
+stages: a serial trunk that opens the chains, chains built at the same time, joins that need several of
+them. The session running `/speckit-implement` only orchestrates. **Every segment, serial ones included,
+is built by one subagent, task after task, at the session's own effort**, with the skills the config
+lists. Subagents cannot talk to you: their questions come to you through the session, with the
+blueprint's defaults, and the answers go back to the same subagent. A hook keeps each segment to its own
+files and out of git; each join runs the gates. See [references/segments.md](references/segments.md).
 
 ## Parallel epics
 
@@ -366,6 +377,11 @@ blueprint.py repos E03 | gate E03           # repositories' git state; run their
 blueprint.py workspace E03 [--create]       # the epic's worktrees (a pushed branch is continued)
 blueprint.py workspace setup [E03] | link   # clone and fetch the repositories here; point them to the hub
 blueprint.py claims [--release KEY]         # which worktree builds which epic
+blueprint.py tasks-graph [--json] [--check] # the task graph's findings and the stage plan
+blueprint.py segments start|next|status|answer S2b|join|stop   # orchestrate a build in segments
+blueprint.py segment start|ask|done S2b     # a segment's subagent: brief, questions, handoff
+blueprint.py tick T012 | decision add       # tick under a lock; a DR-E03-n numbered under a lock
+blueprint.py exclusive db -- npm run test:int   # one command at a time across segments
 blueprint.py metrics [E03] [--brief|--write|--backfill]
 blueprint.py estimate [E05]
 blueprint.py dashboard [--export FILE] | statusline

@@ -51,6 +51,8 @@ PHASE_RE = re.compile(r"speckit-(?:blueprint-)?(discover|amend|compile|tasks|ana
 PHASE_OF = {"discover": "discover", "amend": "amend", "compile": "plan", "tasks": "plan", "analyze": "plan",
             "implement": "build", "review": "review"}
 TICK_RE = re.compile(r"-\s*\[[xX]\]\s*(T\d+)([^\n]*)")
+TICK_CMD_RE = re.compile(r"blueprint\.py[\"']?\s+tick((?:\s+T\d+)+)")
+SEGMENT_START_RE = re.compile(r"blueprint\.py[\"']?\s+segment\s+start\s+([A-Za-z0-9.-]+)")
 OPEN_RE = re.compile(r"-\s*\[ \]\s*(T\d+)")
 SEED_STORY_RE = re.compile(r"\b(?:[A-Za-z][A-Za-z0-9]*:)?(E\d{2}-S\d{2})-T\d+")
 US_RE = re.compile(r"\[US(\d+)\]")
@@ -133,6 +135,21 @@ class Ctx:
         self.repo_paths = sorted(set(paths), key=lambda p: -len(p[0]))
         self.hub = next((n for n, r in reg.items() if r["hub"]), None)
         self.blueprints = {bid: bp_config(cfg, bid)["blueprint_path"] for bid in cfg["blueprints"]}
+
+    def task_text(self, key: str, tid: str) -> str:
+        """The rest of a task's line in its feature's tasks.md (for the story a subagent's tick belongs to)."""
+        cache = self.__dict__.setdefault("_task_lines", {})
+        if key not in cache:
+            cache[key] = {}
+            for name, k in self.folders.items():
+                if k != key:
+                    continue
+                for specs in self.specs_dirs:
+                    tp = self.root / specs / name / "tasks.md"
+                    if tp.is_file():
+                        for m in re.finditer(r"-\s*\[[ xX]\]\s*(T\d+)([^\n]*)", tp.read_text(encoding="utf-8")):
+                            cache[key][m.group(1)] = m.group(2)
+        return cache[key].get(tid, "")
 
     def key_of_folder(self, name: str) -> str:
         if name in self.folders:
@@ -307,15 +324,28 @@ def subagent_usage(transcript: Path, session_id: str, agent_id: str) -> dict:
     """Tokens, models and effort levels of one subagent run, and when its messages were written."""
     path = transcript.parent / session_id / "subagents" / f"agent-{agent_id}.jsonl"
     out = {"tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, "models": {}, "efforts": {},
-           "times": []}
+           "times": [], "ticks": [], "segment": None}
     for e in read_jsonl(path):
-        if e.get("type") in ("assistant", "user"):
-            t = parse_ts(e.get("timestamp"))
-            if t is not None:
-                out["times"].append(t)
+        t = parse_ts(e.get("timestamp")) if e.get("type") in ("assistant", "user") else None
+        if t is not None:
+            out["times"].append(t)
         if e.get("type") != "assistant":
             continue
         msg = e.get("message") or {}
+        for c in tool_uses(e):  # a segment's subagent ticks its own tasks (segments.py)
+            inp = c.get("input") or {}
+            cmd = str(inp.get("command") or "") if c.get("name") == "Bash" else ""
+            m = SEGMENT_START_RE.search(cmd)
+            if m and not out["segment"]:
+                out["segment"] = m.group(1)
+            m = TICK_CMD_RE.search(cmd)
+            if m and t is not None:
+                out["ticks"] += [(tid, t, "") for tid in m.group(1).split()]
+            fp = str(inp.get("file_path") or "")
+            if fp.endswith("tasks.md") and t is not None:
+                for old, new in [(inp.get("old_string") or "", inp.get("new_string") or "")]:
+                    opened = set(OPEN_RE.findall(old))
+                    out["ticks"] += [(tid, t, rest) for tid, rest in TICK_RE.findall(new) if tid in opened]
         for k, v in usage_of(msg).items():
             out["tokens"][k] += v
         bump(out["models"], msg.get("model"))
@@ -538,6 +568,14 @@ def summarise_session(root: Path, cfg: dict, transcript: Path, ctx: Ctx | None =
             s["runs"] += 1
             for lv, n in sub["efforts"].items():
                 bump(s["efforts"], lv, n)
+            for tid, at, rest in sub.get("ticks") or []:
+                a["ticks"].append({"task": tid, "story": story_of(ctx, key, rest or ctx.task_text(key, tid)), "t": at,
+                                   **({"segment": sub["segment"]} if sub.get("segment") else {})})
+            if sub.get("segment") and sub["times"]:
+                seg = a.setdefault("segments", {}).setdefault(sub["segment"], {"runs": 0, "agent_s": 0.0, "weighted": 0.0})
+                seg["runs"] += 1
+                seg["agent_s"] += max(sub["times"]) - min(sub["times"])
+                seg["weighted"] += sum(sub["tokens"][k] * WEIGHTS[k] for k in WEIGHTS)
 
     for e in entries:
         if e.get("type") == "cost-state":
@@ -741,6 +779,10 @@ def combine(parts: list) -> dict:
             t["runs"] += v.get("runs", 0)
             for lv, n in (v.get("efforts") or {}).items():
                 bump(t["efforts"], lv, n)
+        for k, v in (p.get("segments") or {}).items():
+            t = total.setdefault("segments", {}).setdefault(k, {"runs": 0, "agent_s": 0.0, "weighted": 0.0})
+            for f in ("runs", "agent_s", "weighted"):
+                t[f] += v.get(f, 0)
         total["ticks"] += p.get("ticks") or []
         intervals += p.get("intervals") or []
         if p.get("cost_usd") is not None:
@@ -758,6 +800,11 @@ def combine(parts: list) -> dict:
     total["elapsed_active_s"] = sum(e - s for s, e in merged)
     total["calendar_s"] = (total["last"] - total["first"]) if total["first"] is not None else 0.0
     total["agent_s"] = total["active_s"]
+    if total.get("segments"):
+        # Built in segments: the subagents' own time beside the orchestrator's; how many worked at once
+        seg_s = sum(v["agent_s"] for v in total["segments"].values())
+        total["segment_agent_s"] = seg_s
+        total["parallelism"] = round(seg_s / total["elapsed_active_s"], 2) if total["elapsed_active_s"] > 0 else None
     return total
 
 

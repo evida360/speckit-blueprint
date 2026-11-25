@@ -71,6 +71,17 @@ effort_model: inherit
 # review run stops after this many passes and asks the user (1 to 20).
 # review_passes: 5
 
+# How /speckit-implement builds an epic. sequential: one session, task after task. segments: the open
+# tasks are planned into stages from their dependencies (`blueprint.py tasks-graph`); each segment, the
+# serial ones that open and join the chains as much as each parallel chain, is built by ONE subagent, task
+# after task, at the session's effort; the session only orchestrates and relays questions to you
+# (references/segments.md).
+# build:
+#   mode: segments
+#   max_parallel: 3        # chains at the same time (1 to 8)
+#   min_chain_tasks: 2     # a smaller chain joins another
+#   skills: []             # skills every segment's subagent loads before its first edit (the hook checks)
+
 # Metrics from Claude Code transcripts (time, tokens, cost, model, effort per epic and story):
 # local: kept in the hub's .git, never committed; commit: also a summary per finished epic in its feature
 # folder; off: none.

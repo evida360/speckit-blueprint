@@ -122,6 +122,7 @@ def context_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
                             f"(`blueprint.py workspace {trace['epic']} --create` sets up the worktrees{pushed})")
     verify = plan_section(d / "plan.md", "Preconditions and VERIFY-AT-BUILD")
     return {
+        "build": build_facts(root, bcfg, d),
         "applies": True,
         "blueprint_id": bcfg["id"],
         "epic": trace["epic"],
@@ -138,6 +139,26 @@ def context_facts(root: Path, cfg: dict, bp: Blueprint) -> dict:
         "next_decision_id": next_decision_id(root, bcfg, trace["epic"]),
         "amendment_id_format": f"A-{trace['epic']}-<n> on this epic's branch",
     }
+
+
+def build_facts(root: Path, cfg: dict, d: Path) -> dict:
+    """How this epic is built: the mode, and in segments mode the plan over the open tasks."""
+    mode = cfg.get("build", {}).get("mode", "sequential")
+    out: dict = {"mode": mode}
+    if mode != "segments" or not (d / "tasks.md").is_file():
+        return out
+    from .segments import active_run
+    from .tasks_graph import plan, render
+
+    b = cfg["build"]
+    trace = read_trace(d) or {}
+    order = [r["name"] for r in sorted(trace.get("repositories") or [], key=lambda r: int(r.get("order") or 0))]
+    p = plan((d / "tasks.md").read_text(encoding="utf-8"), sorted(set(cfg.get("repositories", {})) | set(order)),
+             order, b["max_parallel"], b["min_chain_tasks"])
+    run = active_run(load_board(root), root, d.relative_to(root).as_posix())
+    out.update({"plan": render(p), "errors": p["errors"], "warnings": p["warnings"], "stats": p["stats"],
+                "running": run["run"] if run else None, "guide": ".specify/extensions/blueprint/references/segments.md"})
+    return out
 
 
 def diffstat(path: Path, base: str, branch: str) -> dict:

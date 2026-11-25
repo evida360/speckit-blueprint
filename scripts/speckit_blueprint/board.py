@@ -7,6 +7,7 @@ sees the same board and nothing of it is ever committed. Outside git it falls ba
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 import os
@@ -29,7 +30,7 @@ def now_iso() -> str:
 
 
 def _empty() -> dict:
-    return {"epics": {}, "sessions": {}, "gates": {}, "reviewers": {}}
+    return {"epics": {}, "sessions": {}, "gates": {}, "reviewers": {}, "builds": {}, "builders": {}, "build_pending": {}}
 
 
 def load(root: Path) -> dict:
@@ -43,39 +44,45 @@ def load(root: Path) -> dict:
     return data
 
 
-def update(root: Path, fn) -> dict:
-    """Read, change and write the board under a lock file (worktrees may write at the same time)."""
-    d = state_dir(root)
-    d.mkdir(parents=True, exist_ok=True)
-    lock = d / "board.lock"
-    deadline = time.time() + 5
+@contextlib.contextmanager
+def file_lock(lock: Path, wait_s: float = 5, stale_s: float = 30, what: str = "the board"):
+    """An exclusive lock file: several worktrees, sessions and subagents may write at the same time."""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + wait_s
     fd = None
     while fd is None:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             try:
-                if time.time() - lock.stat().st_mtime > 30:
+                if time.time() - lock.stat().st_mtime > stale_s:
                     lock.unlink()
                     continue
             except OSError:
                 pass
             if time.time() > deadline:
-                raise SystemExit(f"error: the board is locked ({lock}); remove the file if no blueprint command is running")
+                raise SystemExit(f"error: {what} is locked ({lock}); remove the file if no blueprint command is running")
             time.sleep(0.05)
     try:
-        board = load(root)
-        fn(board)
-        tmp = d / f"board.{os.getpid()}.tmp"
-        tmp.write_text(json.dumps(board, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, d / "board.json")
-        return board
+        yield
     finally:
         os.close(fd)
         try:
             lock.unlink()
         except OSError:
             pass
+
+
+def update(root: Path, fn) -> dict:
+    """Read, change and write the board under a lock file (worktrees may write at the same time)."""
+    d = state_dir(root)
+    with file_lock(d / "board.lock"):
+        board = load(root)
+        fn(board)
+        tmp = d / f"board.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(board, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, d / "board.json")
+        return board
 
 
 def epic_key(bid: str, eid: str) -> str:

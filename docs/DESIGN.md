@@ -222,6 +222,54 @@ fix are split:
   checklist item of every story and every DoD line, and has no open or fixed finding. A findings table
   is never AC evidence. Folders compiled before 0.6 keep the 0.5 rule.
 
+## Building an epic in segments
+
+- **Graph.** tasks.md keeps Spec Kit's format; dependencies use the tasks template's suffix
+  `(depends on T012, T013)`, earlier tasks only. Defaults reproduce today's order: a task depends on the
+  one before it, a `[P]` task on the task before its group, the task after a group on the whole group, a
+  `[P]` group never spans phases. Barriers: Setup and Foundational before every story and Polish task,
+  every story before Polish. Two unordered tasks naming the same file (`(repository, path)`, a folder
+  covers what is under it) are ordered by ID. Spec Kit, `TASK_LINE_RE`, metrics and the dashboard keep
+  parsing the lines; the dashboard drops the suffix from titles.
+- **Plan** (`tasks_graph.py`, pure): Kahn's order over the open tasks (ticked ones are satisfied), the
+  transitive closure as bitsets, and series cuts: a cut after position i is valid iff every task before
+  it is an ancestor of every task after it (true in every linear extension, so one order finds all).
+  Each block between cuts splits into components of the comparability graph plus shared files; one
+  component, or a task with no file, keeps it serial. Chains under `min_chain_tasks` join the smallest
+  other chain; more than `max_parallel` are packed largest-first. Neighbouring serial blocks merge, so
+  serial work is one segment.
+- **One subagent per segment.** The trunk and each join are segments like the chains, never the
+  orchestrator's work and never a resumed earlier agent: a fresh subagent per segment keeps the session's
+  current effort (a resumed agent keeps the effort it started with), does not carry a long, partly stale
+  context into the join, and is the only path that also works after a session ends. Knowledge passes
+  through `segment done` notes, which every later brief prints. Considered and rejected: one spine agent
+  resumed for every serial segment; `isolation: worktree` per chain (it branches from the default branch,
+  not the epic branch, and cannot reach sibling repositories); the orchestrator ticking for the agents (a
+  crash would lose a segment's progress marking).
+- **Effort.** The PreToolUse hook writes the session's `effort.level` (and session, transcript,
+  permission mode) to the board's `build_pending` when the session runs `segments start|next`; those
+  commands print it as each Agent call's `effort`, which survives resumes. A subagent's `segment start`
+  is refused below the run's level (environment variable, cap or model named as the cause). Without
+  effort in the hook input nothing is blocked. This is not an `effort:` step: implement stays at the
+  session's level, which is what the segments get.
+- **Board.** `builds[<worktree>::<feature>]`: the run (plan, stages, current stage, segments with tasks,
+  files, absolute paths, leases, status, agent, questions, answers, notes, joins, effort, skills);
+  `builders[agent_id]`: run, segment, skills loaded (from PreToolUse on `Skill`). A builder may write a
+  path not declared by another segment of the current stage that is not done (it is leased to it), but
+  never tasks.md (`tick`), build.md, review.md, compiled files, the decisions log (`decision add`) or a
+  blueprint; no git command that changes the index, branch or history; no package install in a parallel
+  stage. While a stage has a running segment, the session and unregistered subagents cannot write inside
+  the run's roots. Bash cannot be confined further (generators, scripts): the brief says so, the join's
+  gate and the review catch the rest.
+- **Shared tree.** v1 builds every segment in the epic's working tree: file-disjoint chains, leases and
+  scoped checks; the full gate runs at the join, a red join adds a fix segment.
+- **Relay.** `segment ask` stores questions (`Q-<S>-n`, task, closed/open, options, default with its tag)
+  and sets the segment `waiting`; `segments status` lists every waiting question so the session asks
+  them all at once; `segments answer` records them and prints the text and agent to SendMessage.
+- **Metrics.** A subagent transcript's `blueprint.py tick` commands (and tasks.md edits) are ticks with
+  their own times; `segment start <S>` names its segment; `segments` per epic sum each segment's agent
+  time and weighted tokens; `parallelism` is the segments' agent time over the build's wall-clock.
+
 ## Parallel epics
 
 - `blueprint.py workspace <epic> [--create]` plans (and with `--create` makes) the epic's worktrees: the

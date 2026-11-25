@@ -9,6 +9,11 @@ The event's JSON arrives on stdin; `hook_event_name` picks the handler:
   blueprint feature, a Spec Kit recommendation that names no source keeps the agent going once.
 - Review passes: a subagent that ran `require-effort review --pass N` writes only its feature's review.md
   and runs no command that changes the work; a second pass needs a fresh subagent.
+- Segments: `segments start|next` in the session records its effort; a subagent's `segment start <S>`
+  registers it as that segment's one builder (refused below the run's effort, or when another subagent
+  holds the segment). A builder writes no bookkeeping or compiled file, nothing another running segment
+  owns, nothing before its required skills are loaded; it never commits, and in a parallel stage never
+  installs packages. While a stage runs, nobody else writes in the project.
 
 A hook never blocks a session because of its own failure: errors end in exit 0.
 """
@@ -145,12 +150,18 @@ def pre_tool_use(root: Path, cfg: dict, payload: dict) -> int:
     ti = payload.get("tool_input") or {}
     if tool == "Bash":
         return bash_check(root, cfg, payload, str(ti.get("command") or ""))
+    if tool == "Skill":
+        skill_loaded(root, cfg, payload, str(ti.get("skill") or ""))
+        return 0
     if tool not in WRITE_TOOLS:
         return 0
     fp = ti.get("file_path") or ti.get("notebook_path")
     if not fp:
         return 0
     msg = reviewer_write(root, cfg, payload, fp)  # before the hub check: code repositories live outside it
+    if msg:
+        return block(msg)
+    msg = build_write(root, cfg, payload, fp)
     if msg:
         return block(msg)
     try:
@@ -215,6 +226,9 @@ def effort_check_write(root: Path, cfg: dict, payload: dict, rel: Path, ti: dict
 
 
 def bash_check(root: Path, cfg: dict, payload: dict, command: str) -> int:
+    msg = build_bash(root, cfg, payload, command)
+    if msg:
+        return block(msg)
     m = REQUIRE_RE.search(command)
     if m:
         msg = shortfall(cfg, m.group(1), payload, f"the {m.group(1)} step")
@@ -309,3 +323,232 @@ def same_tree_conflict(root: Path, payload: dict) -> str | None:
                 "its own worktree: `blueprint.py workspace <epic> --create`, then open a session there."
             )
     return None
+
+
+# --------------------------------------------------------------------------------------------
+# Segments (segments.py): the one subagent per segment, and what it may write and run
+
+SEGMENTS_RE = re.compile(r"blueprint\.py[\"']?\s+segments\s+(start|next)\b")
+SEGMENT_START_RE = re.compile(r"blueprint\.py[\"']?\s+segment\s+start\s+([A-Za-z0-9.-]+)")
+SEGMENT_ANY_RE = re.compile(r"blueprint\.py[\"']?\s+segment\s+(ask|done)\s+([A-Za-z0-9.-]+)")
+ORCHESTRATOR_RE = re.compile(r"blueprint\.py[\"']?\s+segments\b")
+TICK_CMD_RE = re.compile(r"blueprint\.py[\"']?\s+tick((?:\s+T\d+)+)")
+BUILDER_GIT_RE = re.compile(r"\bgit\s+(add|commit|push|stash|checkout|switch|reset|restore|rebase|merge|cherry-pick|tag)\b")
+INSTALL_RE = re.compile(r"\b(?:npm|pnpm|yarn|bun)\s+(?:i|install|add|ci)\b|\bpip3?\s+install\b|\bpoetry\s+add\b"
+                        r"|\buv\s+(?:add|pip\s+install|sync)\b|\bgo\s+get\b|\bcargo\s+add\b|\bbundle\s+(?:add|install)\b"
+                        r"|\bcomposer\s+(?:require|install)\b|\bdotnet\s+add\b")
+BUILD_REFUSAL = "speckit-blueprint (segments): {what}"
+
+
+def guard_on(cfg: dict) -> bool:
+    return bool(cfg.get("guard", True))
+
+
+def build_bash(root: Path, cfg: dict, payload: dict, command: str) -> str | None:
+    from .segments import builder, run_of_builder
+
+    agent = payload.get("agent_id")
+    if not agent and SEGMENTS_RE.search(command):
+        record_pending(root, payload)  # the effort the segments get, guard or not
+        return None
+    if not guard_on(cfg):
+        return None
+    board = load_board(root)
+    m = SEGMENT_START_RE.search(command)
+    if m and agent:
+        return register_builder(root, cfg, payload, m.group(1))
+    who = builder(board, agent)
+    if not who:
+        return None
+    run = run_of_builder(board, who)
+    if not run:
+        return None
+    seg = run["segments"].get(who["segment"]) or {}
+    if ORCHESTRATOR_RE.search(command):
+        return BUILD_REFUSAL.format(what="`segments` commands belong to the orchestrating session; a segment uses `segment …`, `tick` and `decision add`.")
+    m = SEGMENT_ANY_RE.search(command)
+    if m and m.group(2) != who["segment"]:
+        return BUILD_REFUSAL.format(what=f"you build {who['segment']}, not {m.group(2)}.")
+    m = TICK_CMD_RE.search(command)
+    if m:
+        foreign = [t for t in m.group(1).split() if t not in seg.get("tasks", [])]
+        if foreign:
+            return BUILD_REFUSAL.format(what=f"{', '.join(foreign)} belong(s) to another segment; tick only your own tasks "
+                                             f"({', '.join(seg.get('tasks', [])) or 'none'}).")
+    if BUILDER_GIT_RE.search(command):
+        return BUILD_REFUSAL.format(what=f"`{command.strip()[:80]}` changes the index, the branch or the history; "
+                                         "commits stay with the user in the main session. Leave your changes in the working tree.")
+    stage = next((st for st in run["stages"] if st["n"] == seg.get("stage")), {})
+    if stage.get("kind") == "parallel" and INSTALL_RE.search(command):
+        return BUILD_REFUSAL.format(what=f"`{command.strip()[:80]}` changes the dependencies other segments build against "
+                                         "at the same time. Return a CHECKPOINT naming the package; a serial segment adds it.")
+    return None
+
+
+def record_pending(root: Path, payload: dict) -> None:
+    """The orchestrating session's effort, for `segments start|next` to give its subagents."""
+    from .board import update
+    from .effort import payload_level
+    import time as _time
+
+    entry = {"effort": payload_level(payload), "session": payload.get("session_id"),
+             "transcript": payload.get("transcript_path"), "permission_mode": payload.get("permission_mode"), "at": _time.time()}
+
+    def fn(board: dict) -> None:
+        board.setdefault("build_pending", {})[str(root.resolve())] = entry
+
+    try:
+        update(root, fn)
+    except SystemExit:
+        pass
+
+
+def register_builder(root: Path, cfg: dict, payload: dict, sid: str) -> str | None:
+    """A subagent's `segment start <S>`: it becomes S's one builder, at no less than the run's effort."""
+    from .board import update
+    from .config import effort_rank
+    from .effort import payload_level
+    from .segments import active_run, build_key
+    import time as _time
+
+    agent = str(payload["agent_id"])
+    feature = active_feature(root)
+    problem: list = []
+
+    def fn(board: dict) -> None:
+        run = active_run(board, root, feature)
+        if not run:
+            problem.append("no build in segments is running for the active feature; the orchestrator runs `segments start`.")
+            return
+        seg = run["segments"].get(sid)
+        if not seg:
+            problem.append(f"no segment {sid} in run {run['run']}.")
+            return
+        if seg["stage"] != run["current"]:
+            problem.append(f"{sid} belongs to stage {seg['stage']}; stage {run['current']} is being built.")
+            return
+        mine = board["builders"].get(agent)
+        if mine and mine.get("run") == run["run"] and mine.get("segment") != sid:
+            problem.append(f"this subagent builds {mine['segment']}; every segment gets its own fresh subagent.")
+            return
+        if seg.get("agent") and seg["agent"] != agent and seg["status"] in ("running", "waiting"):
+            problem.append(f"{sid} is held by another subagent ({seg['agent']}); `segments next --retry {sid}` hands it to a fresh one.")
+            return
+        need, have = run.get("effort"), payload_level(payload)
+        if need and have and effort_rank(have) < effort_rank(need):
+            import os as _os
+
+            env = _os.environ.get("CLAUDE_CODE_EFFORT_LEVEL") or _os.environ.get("CLAUDE_CODE_SUBAGENT_EFFORT")
+            cause = (f"an effort environment variable is set ({env})" if env else
+                     "it was started without the printed `effort`, or an organization cap or the model limits it")
+            problem.append(f"this subagent runs at effort {have}, below the session's {need} ({cause}). "
+                           f"Start it again with the Agent tool's `effort: {need}`.")
+            return
+        seg["agent"] = agent
+        if seg["status"] == "pending":
+            seg["status"] = "running"
+            seg["attempts"] = seg.get("attempts", 0) + 1
+        board["builders"][agent] = {"key": build_key(root, feature), "run": run["run"], "segment": sid,
+                                    "worktree": str(root.resolve()), "effort": have, "skills_loaded": [], "at": _time.time()}
+        cutoff = _time.time() - 2 * 86400
+        board["builders"] = {a: w for a, w in board["builders"].items() if w.get("at", 0) >= cutoff}
+
+    update(root, fn)
+    return BUILD_REFUSAL.format(what=problem[0] + " Nothing was done.") if problem else None
+
+
+def skill_loaded(root: Path, cfg: dict, payload: dict, skill: str) -> None:
+    if not guard_on(cfg) or not payload.get("agent_id") or not skill:
+        return
+    from .board import update
+
+    agent = str(payload["agent_id"])
+
+    def fn(board: dict) -> None:
+        w = board.get("builders", {}).get(agent)
+        if w is not None and skill not in w.setdefault("skills_loaded", []):
+            w["skills_loaded"].append(skill)
+
+    try:
+        update(root, fn)
+    except SystemExit:
+        pass
+
+
+def bookkeeping(root: Path, cfg: dict, run: dict, target: Path) -> str | None:
+    """Files only the extension's commands write while segments build."""
+    feat = (Path(run["worktree"]) / run["feature"]).resolve()
+    if target.parent == feat:
+        if target.name in ("tasks.md", "build.md"):
+            return f"{target.name} is written by `blueprint.py {'tick' if target.name == 'tasks.md' else 'segment …'}`"
+        if target.name == "review.md":
+            return "review.md belongs to the review that follows the build"
+        if target.name in COMPILED_FILES or target.name == TRACE_FILE:
+            return f"{target.name} is compiled from the blueprint"
+    if feat in target.parents and "contracts" in target.relative_to(feat).parts[:1]:
+        return "contracts/ is compiled from the blueprint"
+    bcfg = bp_config(cfg, run.get("blueprint_id"))
+    wt = Path(run["worktree"])
+    if target == (wt / bcfg["decisions_path"]).resolve():
+        return "the decisions log is written by `blueprint.py decision add`"
+    for bid in cfg["blueprints"]:
+        if target == (wt / bp_config(cfg, bid)["blueprint_path"]).resolve():
+            return "the blueprint changes only through /speckit-blueprint-amend (a CHECKPOINT)"
+    return None
+
+
+def build_write(root: Path, cfg: dict, payload: dict, fp: str) -> str | None:
+    if not guard_on(cfg):
+        return None
+    from .segments import active_run, builder, path_hits, run_of_builder, running_segments
+
+    board = load_board(root)
+    target = (root / fp).resolve()
+    who = builder(board, payload.get("agent_id"))
+    run = run_of_builder(board, who) if who else None
+    if who and run:
+        sid = who["segment"]
+        why = bookkeeping(root, cfg, run, target)
+        if why:
+            return BUILD_REFUSAL.format(what=f"{sid} may not write {fp}: {why}.")
+        missing = [s for s in run.get("skills") or [] if s not in who.get("skills_loaded", [])]
+        if missing:
+            return BUILD_REFUSAL.format(what=f"load {', '.join(missing)} with the Skill tool before your first edit.")
+        t = str(target)
+        for other in run["segments"].values():
+            if other["id"] == sid or other["stage"] != run["current"] or other["status"] not in ("running", "waiting", "pending"):
+                continue
+            if any(path_hits(t, d) for d in other.get("paths", []) + other.get("leases", [])):
+                return BUILD_REFUSAL.format(what=f"{fp} belongs to {other['id']}, which runs at the same time. "
+                                                 "If your task needs it, return a CHECKPOINT saying so.")
+        mine = run["segments"].get(sid) or {}
+        if not any(path_hits(t, d) for d in mine.get("paths", []) + mine.get("leases", [])):
+            lease(root, who["key"], sid, t)
+        return None
+    run = active_run(board, root)
+    if not run or not running_segments(run):
+        return None
+    if not any(Path(r) == target or Path(r) in target.parents for r in run.get("roots") or [str(root.resolve())]):
+        return None
+    if payload.get("agent_id") and reviewer_entry(root, cfg, payload):
+        return None
+    names = ", ".join(s["id"] for s in running_segments(run))
+    who_txt = "an unregistered subagent" if payload.get("agent_id") else "the orchestrating session"
+    return BUILD_REFUSAL.format(what=f"{who_txt} may not write {fp} while segments {names} build in this tree. "
+                                     "Segment subagents start with `blueprint.py segment start <S>`; the orchestrator "
+                                     "writes nothing (`blueprint.py segments stop` ends the run).")
+
+
+def lease(root: Path, key: str, sid: str, path: str) -> None:
+    from .board import update
+
+    def fn(board: dict) -> None:
+        run = board.get("builds", {}).get(key)
+        seg = (run or {}).get("segments", {}).get(sid)
+        if seg is not None and path not in seg.setdefault("leases", []):
+            seg["leases"].append(path)
+
+    try:
+        update(root, fn)
+    except SystemExit:
+        pass

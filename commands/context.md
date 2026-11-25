@@ -19,7 +19,8 @@ $ARGUMENTS
 1. Run `blueprint.py context`. If `applies` is false, say nothing, change nothing and return to
    `/speckit-implement`.
 2. Run its `rules_command`: the rules that govern this feature (other blueprints' blocks do not apply).
-3. Read the file at `spec` in full, once.
+3. Read the file at `spec` in full, once. With `build.mode: segments`, skip this: the segments' subagents
+   read their own stories.
 4. If `problems` is not empty (dependencies not done here, the blueprint changed since compile, a
    repository missing or on the wrong branch), stop and report them, each with the default its facts give
    (conventions §8); the user decides.
@@ -28,7 +29,15 @@ $ARGUMENTS
    `## VERIFY-AT-BUILD` heading at the top of the feature's `review.md` (create it with
    `Status: IN PROGRESS` as its first line). A `✘`: stop and report, recommending the blueprint's own
    fallback for it (`blueprint.py find INT-…` / `R-…`) with its tag.
-6. Hold these rules for the whole implementation (the constitution has the rest):
+6. With `build.mode: segments` (and tasks open), you orchestrate and build nothing yourself: implement's
+   checklist gate and setup verification run as usual, then its execution steps (phase-by-phase
+   execution, progress tracking, completion validation) are the segment loop in
+   `.specify/extensions/blueprint/references/segments.md`, section "Orchestrator": `blueprint.py segments
+   start`, then each stage's subagents (one per segment, the serial ones included), their questions to
+   the user and back, and the joins. You write no code and tick no task; the rules below are the
+   segments' and are in their brief. When `segments next` reports done, go to step 8.
+   With `build.mode: sequential`, hold these rules for the whole implementation (the constitution has the
+   rest):
    - Tick each task `[X]` in tasks.md as soon as it is done and its gate is green, one at a time. The ticks
      are the resume point, and the progress and story timings in status, metrics and the dashboard.
    - Each task works in its repository (`repositories[].path` in the context facts) and gives paths
@@ -37,7 +46,7 @@ $ARGUMENTS
    - A question while building: look it up first (conventions §8); only a decision nothing in the
      feature folder, the decisions log or the blueprint covers gets a record. Its ID is
      `next_decision_id`, its Context keeps `[NOT IN BLUEPRINT — searched: …]`; add its record and index
-     row to `decisions_log` in the same commit.
+     row to `decisions_log` in the same commit (`blueprint.py decision add` does both).
    - Implement's "some checklists are incomplete, proceed?" is recommended from the unchecked items'
      blueprint IDs: proceed only when none of them is an AC, an edge case or a Definition of Done line. An AC that is wrong or impossible: stop and use
      `/speckit-blueprint-amend`.

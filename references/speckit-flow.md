@@ -82,6 +82,10 @@ instead of the per-session runbook:
 - **State lives in files:** `tasks.md` checkboxes (progress), `review.md` (evidence and handoff),
   the blueprint's decisions log (`docs/DECISIONS.md` by default; with an index), its Amendments log (changes to the plan).
   There is no PROGRESS.md; `blueprint.py status` derives progress from the feature folders.
+- **Inside an epic** (optional, `build: {mode: segments}`): the tasks name their files and their real
+  dependencies (`(depends on T004)`), and the epic is built in segments, a serial trunk, chains at the
+  same time, joins, each by one subagent (`.specify/extensions/blueprint/references/segments.md`).
+  Write each story's Tasks with the files they change so the chains can be found.
 - **Parallel epics:** one worktree per epic (`blueprint.py workspace Enn --create`); an epic starts when the
   epics it depends on are done and merged.
 - **Questions while building** take their default from this blueprint, the compiled feature folder or

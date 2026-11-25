@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.7.0 — unreleased (release candidate v0.7.0-rc.1)
+
+An epic can be built in segments: a serial trunk, chains at the same time, joins; each segment by one
+subagent.
+
+- **The task graph.** tasks.md keeps Spec Kit's line format and its own dependency idiom, a suffix
+  naming earlier tasks: `(depends on T004, T009)`. Without one a task depends on the task before it (a
+  `[P]` task on the task before its group). Compile's task-seed instructions and the answers hook ask for
+  the suffix on the first task of every story and for file paths in every task. `blueprint.py
+  tasks-graph [--json] [--check]` finds unknown, later or duplicate tasks, cycles, compiled files and
+  tasks with no file, and plans the open tasks into stages: a block of the topological order between two
+  cuts (every task before a cut is an ancestor of every task after it) whose tasks fall apart into groups
+  sharing no file is a parallel stage, one chain per group; the rest is serial. New `after_tasks` hook
+  (`speckit.blueprint.graph`) runs the check and shows the plan.
+- **Building in segments** (`build: {mode: segments}`, off by default). The before_implement hook makes
+  the session the orchestrator: `blueprint.py segments start|next|status|answer|join|stop`. Every
+  segment, the trunk and joins as much as each chain, is built by exactly one subagent, task after task,
+  at the session's effort (the hook records the effort it sees on `segments start|next`; the subagent's
+  `segment start <S>` is refused below it). Subagents relay questions through `segment ask` and the
+  orchestrator asks the user and sends the answers back to the same subagent; `segments next --retry`
+  hands a lost segment to a fresh one. The hook gives each segment its files: a builder writes no
+  bookkeeping or compiled file, nothing another running segment owns, nothing before the skills in
+  `build.skills` are loaded; it never commits, and in a parallel stage never installs packages. While a
+  stage runs nobody else writes in the project. A join checks the ticks and runs the gates; a red one adds
+  a fix segment. `build.md` in the feature folder logs runs, notes, questions, answers and joins.
+- `blueprint.py tick` ticks tasks under a lock, `decision add` numbers and indexes a `DR-<epic>-<n>`
+  under a lock (two subagents never take the same number), `exclusive <name> -- <command>` runs commands
+  that share ports or a database one at a time.
+- Metrics count a segment subagent's ticks (its stories' times) and its time per segment, with the
+  parallelism achieved; the dashboard shows the stages and each segment's state; the status line shows
+  the stage.
+
+Upgrade: add the extension again to register the `after_tasks` hook and the `Skill` matcher. Building
+stays sequential unless the config sets `build: {mode: segments}`.
+
 ## 0.6.0 — 2026-11-24
 
 Answers come from the blueprint, and the review is a loop.

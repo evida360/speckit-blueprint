@@ -52,7 +52,13 @@ DEFAULTS = {
     "metrics": "local",
     # The most review passes one review run makes before it stops and asks the user (1 to 20).
     "review_passes": 5,
+    # How /speckit-implement builds an epic: sequential (one session, task after task) or segments (a
+    # deterministic plan of stages; each segment, serial or one of parallel chains, built by one subagent
+    # at the session's effort). DESIGN.md "Building an epic in segments".
+    "build": {"mode": "sequential", "max_parallel": 3, "min_chain_tasks": 2, "skills": []},
 }
+
+BUILD_MODES = ("sequential", "segments")
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 EFFORT_STEPS = ("discover", "amend", "review")
@@ -237,6 +243,7 @@ def config_from(raws: list) -> dict:
     if not 1 <= passes <= 20:
         raise ConfigError(f"review_passes: '{cfg.get('review_passes')}' must be a number of passes (1 to 20)")
     cfg["review_passes"] = passes
+    cfg["build"] = build_config(cfg.get("build"))
     cfg["repositories"] = repo_entries(cfg)
     metrics = str(cfg.get("metrics") if cfg.get("metrics") is not False else "off").strip().lower()
     if metrics not in METRICS_MODES:
@@ -276,6 +283,40 @@ def effort_config(value) -> dict:
         if level not in EFFORT_LEVELS:
             raise ConfigError(f"effort: '{level}' for {step} is not one of {', '.join(EFFORT_LEVELS)} or session")
         out[step] = level
+    return out
+
+
+def build_config(value) -> dict:
+    """`build:` with its defaults; every key is optional."""
+    out = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULTS["build"].items()}
+    if value in (None, [], {}):
+        return out
+    if isinstance(value, str):
+        value = {"mode": value}
+    if not isinstance(value, dict):
+        raise ConfigError("`build` must be a map (mode, max_parallel, min_chain_tasks, skills)")
+    unknown = sorted(set(value) - set(out))
+    if unknown:
+        raise ConfigError(f"build: unknown key(s) {', '.join(unknown)} (known: {', '.join(out)})")
+    mode = str(value.get("mode", out["mode"])).strip().lower()
+    if mode not in BUILD_MODES:
+        raise ConfigError(f"build.mode: '{mode}' is not one of {', '.join(BUILD_MODES)}")
+    out["mode"] = mode
+    for key, lo, hi in (("max_parallel", 1, 8), ("min_chain_tasks", 1, 50)):
+        if key in value:
+            try:
+                n = int(str(value[key]).strip())
+            except ValueError:
+                n = 0
+            if not lo <= n <= hi:
+                raise ConfigError(f"build.{key}: '{value[key]}' must be a number from {lo} to {hi}")
+            out[key] = n
+    for key in ("skills",):
+        v = value.get(key, [])
+        v = [v] if isinstance(v, str) and v else (v or [])
+        if not isinstance(v, list):
+            raise ConfigError(f"build.{key} must be a list")
+        out[key] = [str(x).strip() for x in v if str(x).strip()]
     return out
 
 

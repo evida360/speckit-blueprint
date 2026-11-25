@@ -369,6 +369,14 @@ def compile_epic(root: Path, cfg: dict, bp: Blueprint, epic_ref: str, force: boo
         "order, and put the story's tests (its **Tests** block in spec.md) before its implementation tasks. "
         "Add setup or foundational tasks only when the epic's preconditions need them.",
         "",
+        "Dependencies decide which work can be built at the same time (`blueprint.py tasks-graph` checks them "
+        "after this step). Every task names the files it writes, in backticks, relative to its repository. "
+        "A task depends on the task before it unless its line ends with `(depends on T004, T009)`, naming the "
+        "earlier tasks it really needs; write that suffix on the first task of every story phase (only Setup "
+        "and Foundational tasks when the story does not need an earlier story). Mark `[P]` only tasks that "
+        "share no file and no dependency with their neighbours. A dependency nobody states makes the work "
+        "sequential; never invent independence.",
+        "",
     ]
     for n, st in enumerate(epic["stories"], 1):
         body = "\n".join(lines[st["start"] + 1 : st["end"]])

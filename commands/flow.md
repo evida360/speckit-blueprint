@@ -50,7 +50,7 @@ answer tagged (conventions §8).
 | `bootstrap` | Run `next.run`. Tell the user the constitution amendment it reports (`constitution.amendment`) and anything their governance asks beyond a version bump. In `own` mode never run `/speckit-constitution` afterwards. |
 | `speckit-blueprint-compile` | `/speckit-blueprint-compile <epic>` (`<id>:<epic>` with several blueprints), then `/speckit-tasks` and `/speckit-analyze` in this session. The answers hook runs before each. A defect analyze finds in spec.md, plan.md or the data model is an amendment naming the blueprint text it changes; one only in tasks.md is fixed in tasks.md. Never `/speckit-specify` or `/speckit-plan` for a compiled epic. |
 | `speckit-tasks` | `/speckit-tasks`, then `/speckit-analyze`. |
-| `speckit-implement` | If `next.activate` is set, first `blueprint.py activate <next.activate>`. Then `/speckit-implement`. |
+| `speckit-implement` | If `next.activate` is set, first `blueprint.py activate <next.activate>`. Then `/speckit-implement`. With `build: {mode: segments}` its before_implement hook makes this session the orchestrator of the segments (`references/segments.md`); keep going until `segments next` reports done. |
 | `speckit-blueprint-review` | `/speckit-blueprint-review`: the review loop. When it stops with open findings, that is a gate (section 4). |
 | `wait` | Every remaining epic is blocked, built elsewhere or started on another branch: say which and why; offer to continue a started epic, to build a ready epic of another blueprint, or to finish the dependency first. |
 | `speckit-blueprint-discover` with `state: all-done` | Every epic of this blueprint is done: offer incremental discovery; name any other blueprint with work left. |

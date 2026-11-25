@@ -94,6 +94,9 @@ table.mini { font-size: 13px; }
 .chip i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; background: var(--axis); vertical-align: 0; }
 .chip.c-done i { background: var(--good); }
 .chip.c-open i { background: var(--warn); }
+.chip.c-building i { background: var(--s1); }
+.chip.c-review i { background: var(--violet); }
+.chip.c-blocked i { background: var(--serious); }
 .ok { color: var(--good-ink); }
 .bad { color: var(--crit-ink); }
 .warnline { display: block; margin: 3px 0 0; font-size: 12.5px; color: var(--ink); font-weight: 400; }
@@ -940,11 +943,23 @@ footer { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8
     }
     const repos = arr(e.repositories).filter(r => r && typeof r === 'object');
     if (repos.length) out.push(html`<h4>Repositories</h4><div class="scroll"><table class="mini"><thead><tr><th>Repository</th><th>Order</th><th>Branch ← base</th><th>Tasks</th><th>Last gate</th><th>Git</th></tr></thead><tbody>${repos.map(repoRow)}</tbody></table></div>`);
+    if (e.build && typeof e.build === 'object') out.push(buildBlock(e.build));
     out.push(storiesBlock(e));
     const missing = arr(e.review_missing);
     if (missing.length) out.push(html`<p class="warnline">Review has no evidence for ${missing.join(', ')}</p>`);
     out.push(detailsLine(e));
     return out;
+  }
+
+  function buildBlock(bd) { // the epic built in segments: stages, each segment by one subagent
+    const segs = new Map(arr(bd.segments).filter(x => x && typeof x === 'object').map(x => [x.id, x]));
+    const tone = st => ({ done: 'c-done', running: 'c-building', waiting: 'c-review', pending: 'c-open', lost: 'c-blocked' })[st] || 'c-open';
+    const stages = arr(bd.stages).filter(x => x && typeof x === 'object').map(st => html`<span class="stage">${arr(st.segments).map((id, i) => {
+      const s = segs.get(id) || {};
+      return html`${i ? ' ∥ ' : ''}<span class="chip ${tone(s.status)}" title="${s.kind || ''} · ${arr(s.tasks).join(', ')}${num(s.questions) ? ` · ${s.questions} question(s) waiting` : ''}"><i></i>${id} ${s.status || ''}</span>`;
+    })}${st.join === false ? html` <span class="bad">join red</span>` : ''}</span>`);
+    const meta = [bd.status, bd.effort ? `effort ${bd.effort}` : '', isNum(bd.parallelism) ? `parallelism ${bd.parallelism}×` : ''].filter(Boolean).join(' · ');
+    return html`<h4>Build in segments</h4><p class="meta">${bd.run || ''}${meta ? ` · ${meta}` : ''}</p><p>${stages.map((x, i) => html`${i ? ' → ' : ''}${x}`)}</p>`;
   }
 
   function repoRow(r) {

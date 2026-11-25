@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: blueprint
   name: "Blueprint"
-  version: "0.6.0"
+  version: "0.7.0"
   description: "Evidence-backed product discovery into blueprints, compiled into Spec Kit features one epic at a time, across one or many repositories (Claude Code)"
   author: "Mohsen Samiei"
   repository: "https://github.com/mohsensamiei/speckit-blueprint"
@@ -39,6 +39,9 @@ provides:
     - name: speckit.blueprint.review
       file: commands/review.md
       description: "After implement (hook): the review loop (full passes at max that fix nothing, fixes here, until clean), then the handoff"
+    - name: speckit.blueprint.graph
+      file: commands/graph.md
+      description: "After tasks (hook): check the task graph of a blueprint feature and show the stages it builds in"
     - name: speckit.blueprint.answers
       file: commands/answers.md
       description: "Before Spec Kit's questioning commands (hook): proposed answers come from the blueprint, tagged with their source"
@@ -77,6 +80,10 @@ hooks:
     command: speckit.blueprint.answers
     optional: false
     description: "Blueprint features: checklist questions and items take their defaults and IDs from the blueprint"
+  after_tasks:
+    command: speckit.blueprint.graph
+    optional: false
+    description: "Blueprint features: dependencies and file paths in tasks.md are checked; the stage plan is shown"
   before_implement:
     command: speckit.blueprint.context
     optional: false
@@ -92,7 +99,7 @@ events:
     timeout: 20
   pre_tool_use:
     command: speckit.blueprint.hook
-    matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash"
+    matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash|Skill"
     timeout: 10
   stop:
     command: speckit.blueprint.hook
